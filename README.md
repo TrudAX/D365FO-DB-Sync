@@ -6,6 +6,8 @@ A WinForms .NET 9 application for copying data from Dynamics 365 Finance & Opera
 
 This tool helps developers synchronize data from D365FO cloud environments to their local development databases, making it easier to test with production-like data.
 
+![](assets/MainDialog.png)
+
 ## Features
 
 ### Core Functionality
@@ -19,8 +21,6 @@ This tool helps developers synchronize data from D365FO cloud environments to th
   - **Truncate Option**: Force truncate before insert with `-truncate` flag
 - **Smart Field Mapping**: Automatically maps common fields between source and destination
 - **Parallel Execution**: Configurable parallel fetch and insert operations for performance
-- **SQLDICTIONARY Caching**: Dramatically faster table preparation (10-20x speedup)
-- **Intelligent Cleanup**: Context-aware delete strategies based on copy method
 
 ### Extended Strategy Format
 
@@ -122,11 +122,6 @@ Right-click on any table in the grid after "Discover Tables" to generate formatt
 - Sequence update SQL
 
 This allows you to test and verify SQL logic without running the actual operations.
-
-## Version
-
-- **Format**: `1.0.YYYY.DayOfYear` (auto-increments with each build)
-- **Example**: `1.0.2025.334`
 
 ## Author
 
