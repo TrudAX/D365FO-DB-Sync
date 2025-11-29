@@ -156,19 +156,18 @@ namespace DBCopyTool.Services
         }
 
         /// <summary>
-        /// Deletes existing records based on the copy strategy
-        /// If copying the whole table (CachedData.Rows.Count >= Tier2RowCount), uses TRUNCATE for performance
+        /// Deletes existing records based on the copy strategy and cleanup rules
         /// </summary>
         private async Task DeleteExistingRecordsAsync(TableInfo tableInfo, SqlConnection connection, SqlTransaction transaction, CancellationToken cancellationToken)
         {
             if (tableInfo.CachedData == null || tableInfo.CachedData.Rows.Count == 0)
                 return;
 
-            // Optimization: If we're copying the whole table, truncate it for better performance
-            if (tableInfo.CachedData.Rows.Count >= tableInfo.Tier2RowCount)
+            // If UseTruncate flag is set or strategy is All, always truncate
+            if (tableInfo.UseTruncate || tableInfo.StrategyType == CopyStrategyType.All)
             {
                 string truncateQuery = $"TRUNCATE TABLE [{tableInfo.TableName}]";
-                _logger($"[AxDB SQL] Truncating table (full copy): {truncateQuery}");
+                _logger($"[AxDB SQL] Truncating table: {truncateQuery}");
 
                 using var command = new SqlCommand(truncateQuery, connection, transaction);
                 command.CommandTimeout = _connectionSettings.CommandTimeout;
@@ -176,50 +175,92 @@ namespace DBCopyTool.Services
                 return;
             }
 
-            if (tableInfo.StrategyType == CopyStrategyType.RecId)
+            // Apply cleanup rules based on strategy type
+            switch (tableInfo.StrategyType)
             {
-                // Delete by RecId
-                long minRecId = GetMinRecId(tableInfo.CachedData);
-                string deleteQuery = $"DELETE FROM [{tableInfo.TableName}] WHERE RecId >= @MinRecId";
-                _logger($"[AxDB SQL] Deleting records: {deleteQuery} (MinRecId={minRecId})");
+                case CopyStrategyType.RecId:
+                    // RecId only: DELETE WHERE RecId >= @MinRecId
+                    await DeleteByRecIdAsync(tableInfo, connection, transaction, cancellationToken);
+                    break;
 
-                using var command = new SqlCommand(deleteQuery, connection, transaction);
-                command.Parameters.AddWithValue("@MinRecId", minRecId);
-                command.CommandTimeout = _connectionSettings.CommandTimeout;
+                case CopyStrategyType.ModifiedDate:
+                    // DateTime only: DELETE WHERE ModifiedDateTime >= @MinDate; DELETE WHERE RecId IN (@FetchedIds)
+                    await DeleteByModifiedDateAsync(tableInfo, connection, transaction, cancellationToken);
+                    break;
 
-                await command.ExecuteNonQueryAsync(cancellationToken);
+                case CopyStrategyType.Where:
+                    // WHERE only: DELETE WHERE {same condition}; DELETE WHERE RecId >= @MinRecId
+                    await DeleteByWhereClauseAsync(tableInfo, connection, transaction, cancellationToken);
+                    await DeleteByRecIdAsync(tableInfo, connection, transaction, cancellationToken);
+                    break;
+
+                case CopyStrategyType.RecIdWithWhere:
+                    // RecId + WHERE: DELETE WHERE {same condition}; DELETE WHERE RecId >= @MinRecId
+                    await DeleteByWhereClauseAsync(tableInfo, connection, transaction, cancellationToken);
+                    await DeleteByRecIdAsync(tableInfo, connection, transaction, cancellationToken);
+                    break;
+
+                case CopyStrategyType.ModifiedDateWithWhere:
+                    // DateTime + WHERE: DELETE WHERE ModifiedDateTime >= @MinDate; DELETE WHERE {condition}; DELETE WHERE RecId IN (@FetchedIds)
+                    await DeleteByModifiedDateAsync(tableInfo, connection, transaction, cancellationToken);
+                    await DeleteByWhereClauseAsync(tableInfo, connection, transaction, cancellationToken);
+                    break;
             }
-            else if (tableInfo.StrategyType == CopyStrategyType.ModifiedDate)
+        }
+
+        private async Task DeleteByRecIdAsync(TableInfo tableInfo, SqlConnection connection, SqlTransaction transaction, CancellationToken cancellationToken)
+        {
+            long minRecId = GetMinRecId(tableInfo.CachedData!);
+            string deleteQuery = $"DELETE FROM [{tableInfo.TableName}] WHERE RecId >= @MinRecId";
+            _logger($"[AxDB SQL] Deleting by RecId: {deleteQuery} (MinRecId={minRecId})");
+
+            using var command = new SqlCommand(deleteQuery, connection, transaction);
+            command.Parameters.AddWithValue("@MinRecId", minRecId);
+            command.CommandTimeout = _connectionSettings.CommandTimeout;
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        private async Task DeleteByModifiedDateAsync(TableInfo tableInfo, SqlConnection connection, SqlTransaction transaction, CancellationToken cancellationToken)
+        {
+            DateTime minModifiedDate = GetMinModifiedDate(tableInfo.CachedData!);
+            string deleteDateQuery = $"DELETE FROM [{tableInfo.TableName}] WHERE [MODIFIEDDATETIME] >= @MinModifiedDate";
+            _logger($"[AxDB SQL] Deleting by ModifiedDateTime: {deleteDateQuery} (MinDate={minModifiedDate:yyyy-MM-dd HH:mm:ss})");
+
+            using var command1 = new SqlCommand(deleteDateQuery, connection, transaction);
+            command1.Parameters.AddWithValue("@MinModifiedDate", minModifiedDate);
+            command1.CommandTimeout = _connectionSettings.CommandTimeout;
+            await command1.ExecuteNonQueryAsync(cancellationToken);
+
+            // Delete by RecId list (handles records modified in Tier2 that had old dates in AxDB)
+            var recIds = GetRecIdList(tableInfo.CachedData!);
+            if (recIds.Count > 0)
             {
-                // Delete by ModifiedDate
-                DateTime minModifiedDate = GetMinModifiedDate(tableInfo.CachedData);
-                string deleteDateQuery = $"DELETE FROM [{tableInfo.TableName}] WHERE [MODIFIEDDATETIME] >= @MinModifiedDate";
-                _logger($"[AxDB SQL] Deleting by date: {deleteDateQuery} (MinDate={minModifiedDate:yyyy-MM-dd HH:mm:ss})");
-
-                using var command1 = new SqlCommand(deleteDateQuery, connection, transaction);
-                command1.Parameters.AddWithValue("@MinModifiedDate", minModifiedDate);
-                command1.CommandTimeout = _connectionSettings.CommandTimeout;
-                await command1.ExecuteNonQueryAsync(cancellationToken);
-
-                // Delete by RecId list (handles records modified in Tier2 that had old dates in AxDB)
-                var recIds = GetRecIdList(tableInfo.CachedData);
-                if (recIds.Count > 0)
+                _logger($"[AxDB] Deleting {recIds.Count} records by RecId list");
+                // Split into batches of 1000 to avoid SQL parameter limits
+                for (int i = 0; i < recIds.Count; i += 1000)
                 {
-                    _logger($"[AxDB] Deleting {recIds.Count} records by RecId list");
-                    // Split into batches of 1000 to avoid SQL parameter limits
-                    for (int i = 0; i < recIds.Count; i += 1000)
-                    {
-                        var batch = recIds.Skip(i).Take(1000).ToList();
-                        string recIdList = string.Join(",", batch);
-                        string deleteRecIdQuery = $"DELETE FROM [{tableInfo.TableName}] WHERE RecId IN ({recIdList})";
-                        _logger($"[AxDB SQL] {deleteRecIdQuery}");
+                    var batch = recIds.Skip(i).Take(1000).ToList();
+                    string recIdList = string.Join(",", batch);
+                    string deleteRecIdQuery = $"DELETE FROM [{tableInfo.TableName}] WHERE RecId IN ({recIdList})";
 
-                        using var command2 = new SqlCommand(deleteRecIdQuery, connection, transaction);
-                        command2.CommandTimeout = _connectionSettings.CommandTimeout;
-                        await command2.ExecuteNonQueryAsync(cancellationToken);
-                    }
+                    using var command2 = new SqlCommand(deleteRecIdQuery, connection, transaction);
+                    command2.CommandTimeout = _connectionSettings.CommandTimeout;
+                    await command2.ExecuteNonQueryAsync(cancellationToken);
                 }
             }
+        }
+
+        private async Task DeleteByWhereClauseAsync(TableInfo tableInfo, SqlConnection connection, SqlTransaction transaction, CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrEmpty(tableInfo.WhereClause))
+                return;
+
+            string deleteQuery = $"DELETE FROM [{tableInfo.TableName}] WHERE {tableInfo.WhereClause}";
+            _logger($"[AxDB SQL] Deleting by WHERE clause: {deleteQuery}");
+
+            using var command = new SqlCommand(deleteQuery, connection, transaction);
+            command.CommandTimeout = _connectionSettings.CommandTimeout;
+            await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
         /// <summary>

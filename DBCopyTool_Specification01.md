@@ -21,11 +21,19 @@ The D365FO Database Copy Tool is a Windows Forms application designed to synchro
 ### 1.3 Key Features
 
 - Selective table copying with wildcard pattern support
-- Two copy strategies: Last N records by RecId, or records modified within N days
+- Advanced copy strategies:
+  - Last N records by RecId
+  - Records modified within N days
+  - Custom WHERE clause filtering
+  - Full table copy with automatic truncate
+  - Combined strategies (RecId/Days + WHERE)
+  - Optional truncate flag for any strategy
+- System-level table exclusions (separate from user exclusions)
 - Parallel execution for performance
 - Stage-based execution with retry capabilities
 - Configuration persistence with simple encryption
 - Real-time progress monitoring
+- "Get SQL" feature for testing and verification
 
 ---
 
@@ -117,6 +125,28 @@ localhost\AxDB
 | Parallel Fetch Connections | int | Number of parallel connections for fetching from Tier2 | 10 |
 | Parallel Insert Connections | int | Number of parallel connections for inserting to AxDB | 10 |
 
+#### 3.1.5 System Excluded Tables
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| System Excluded Tables | Multiline Text | System-level table exclusions (patterns like user exclusions) | See below |
+
+**Default System Exclusions:**
+```
+SQL*
+UserInfo
+Sys*
+Batch*
+RetailCDX*
+RETAILHARDWAREPROFILE
+```
+
+**Notes:**
+- These exclusions are combined with user-defined "Tables to Exclude" during table filtering
+- Managed separately to prevent accidental modification of system-critical exclusions
+- "Init" button available to reset to defaults
+- Stored in configuration files (persisted across sessions)
+
 ### 3.2 Table Selection Configuration (Tables Tab)
 
 #### 3.2.1 Tables to Copy (Multiline Text)
@@ -146,9 +176,10 @@ Defines tables to exclude from copying:
 
 **Default Exclusions:** (pre-populated but editable)
 ```
-Sys*
-Batch*
+*Staging
 ```
+
+**Note:** System-level exclusions (SQL*, Sys*, Batch*, etc.) are managed separately in the Connection tab under "System Excluded Tables"
 
 #### 3.2.3 Fields to Exclude (Multiline Text)
 
@@ -182,36 +213,69 @@ SYSROWVERSION
 
 **UI Note:** The label for this field should have a tooltip displaying the format and examples.
 
+**Extended Format (Pipe-Delimited):**
+```
+TableName|SourceStrategy|where:condition -truncate
+```
+
 **Tooltip Text:**
 ```
-Format:
-  TableName:RecordCount     (RecId strategy)
-  TableName:days:DayCount   (ModifiedDate strategy)
+Format: TableName|SourceStrategy|where:condition -truncate
+
+Source strategies:
+  5000              Top N records by RecId
+  days:30           Records modified in last N days
+  all               Full table copy (truncates destination)
+  where:FIELD='X'   All records matching condition
+
+Combinations:
+  5000|where:DATAAREAID='1000'      Top N with filter
+  days:30|where:DATAAREAID='1000'   Last N days with filter
+
+Options:
+  -truncate         Truncate destination before insert
 
 Examples:
-  CUSTTABLE:5000
-  SALESLINE:days:30
+  CUSTTABLE|5000
+  SALESLINE|days:30
+  INVENTTRANS|all
+  CUSTTRANS|5000|where:DATAAREAID='1000'
+  VENDTABLE|days:14|where:POSTED=1 -truncate
 ```
 
-Format:
-```
-TableName:RecordCount
-TableName:days:DayCount
-```
+**Format Rules:**
 
-Examples:
-```
-CUSTTABLE:5000
-SALESLINE:days:30
-INVENTTRANS:50000
-LEDGERTRANS:days:90
-```
+| Pattern | Meaning |
+|---------|---------|
+| `CUSTTABLE` | Use default strategy (RecId with default count) |
+| `CUSTTABLE\|5000` | Top 5000 by RecId |
+| `CUSTTABLE\|days:30` | Last 30 days by ModifiedDateTime |
+| `CUSTTABLE\|all` | Full table (implies truncate) |
+| `CUSTTABLE\|5000 -truncate` | Top 5000, truncate destination first |
+| `CUSTTABLE\|where:DATAAREAID='1000'` | All records matching WHERE |
+| `CUSTTABLE\|5000\|where:DATAAREAID='1000'` | Top 5000 matching WHERE |
+| `CUSTTABLE\|days:30\|where:DATAAREAID='1000'` | Last 30 days matching WHERE |
+| `CUSTTABLE\|where:DATAAREAID='1000' -truncate` | All matching WHERE, truncate first |
+| `CUSTTABLE\|5000\|where:DATAAREAID='1000' -truncate` | Top 5000 matching WHERE, truncate first |
 
 **Parsing Rules:**
-- `TableName:Number` → RecId strategy with N records
-- `TableName:days:Number` → ModifiedDate strategy with N days
 - Case-insensitive table name matching
-- Invalid format → Error on "Prepare Table List" stage
+- WHERE clause passed directly to SQL (no validation)
+- `-truncate` can be added to any strategy (except `all` which implies it)
+- Invalid format → Error with line number on "Prepare Table List" stage
+
+**Cleanup Rules by Strategy:**
+
+| Source Strategy | Default Cleanup | With -truncate |
+|-----------------|-----------------|----------------|
+| `5000` (RecId only) | DELETE WHERE RecId >= @MinRecId | TRUNCATE |
+| `days:30` (DateTime only) | DELETE WHERE ModifiedDateTime >= @MinDate; DELETE WHERE RecId IN (@FetchedIds) | TRUNCATE |
+| `where:...` (WHERE only) | DELETE WHERE {same condition}; DELETE WHERE RecId >= @MinRecId | TRUNCATE |
+| `5000\|where:...` (RecId + WHERE) | DELETE WHERE {same condition}; DELETE WHERE RecId >= @MinRecId | TRUNCATE |
+| `days:30\|where:...` (DateTime + WHERE) | DELETE WHERE ModifiedDateTime >= @MinDate; DELETE WHERE {same condition}; DELETE WHERE RecId IN (@FetchedIds) | TRUNCATE |
+| `all` (Full table) | TRUNCATE | TRUNCATE |
+
+**Important:** When `-truncate` is used, sequence is still updated to max RecId after insert.
 
 #### 3.3.3 Strategy Validation
 
@@ -737,6 +801,53 @@ Examples:
 - Selection mode: FullRowSelect
 - Read-only
 
+**Context Menu:**
+- **Copy Table Name**: Copies the selected table name to clipboard
+- **Get SQL**: Generates formatted SQL for the selected table(s) and copies to clipboard
+
+**Get SQL Feature:**
+
+When "Get SQL" is selected from the context menu (after "Prepare Table List" has been run), the tool generates formatted SQL showing:
+
+```sql
+-- ============================================
+-- Table: CUSTTABLE
+-- Strategy: RecId:5000 WHERE
+-- Cleanup: Delete by WHERE + RecId
+-- ============================================
+
+-- === SOURCE QUERY (Tier2) ===
+SELECT TOP 5000 [RECID], [ACCOUNTNUM], [DATAAREAID], ...
+FROM [CUSTTABLE]
+WHERE DATAAREAID='1000'
+ORDER BY RECID DESC
+
+-- === CLEANUP QUERIES (AxDB) ===
+-- Step 1: Delete by custom WHERE condition
+DELETE FROM [CUSTTABLE]
+WHERE DATAAREAID='1000'
+
+-- Step 2: Delete by RecId (>= minimum from source)
+DELETE FROM [CUSTTABLE]
+WHERE RECID >= @MinRecId
+-- Note: @MinRecId will be determined after fetching source data
+
+-- === INSERT ===
+-- SqlBulkCopy will be used to insert fetched records
+
+-- === SEQUENCE UPDATE ===
+DECLARE @MaxRecId BIGINT = (SELECT MAX(RECID) FROM [CUSTTABLE])
+DECLARE @TableId INT = 10878 -- Actual TableId from SQLDICTIONARY
+IF @MaxRecId > (SELECT CAST(current_value AS BIGINT) FROM sys.sequences WHERE name = 'SEQ_10878')
+    ALTER SEQUENCE [SEQ_10878] RESTART WITH @MaxRecId
+```
+
+This feature allows developers to:
+- Test SQL logic before running operations
+- Verify cleanup strategies are correct
+- Debug complex WHERE clause scenarios
+- Document the SQL that will be executed
+
 **Columns:**
 
 | Column | Width | Alignment |
@@ -835,19 +946,23 @@ public class TableInfo
     // Identification
     public string TableName { get; set; }
     public int TableId { get; set; }
-    
-    // Strategy
-    public CopyStrategyType StrategyType { get; set; }  // RecId or ModifiedDate
-    public int StrategyValue { get; set; }  // Record count or days
-    
+
+    // Strategy (Extended)
+    public CopyStrategyType StrategyType { get; set; }
+    public int StrategyValue { get; set; }  // Backward compatibility
+    public int? RecIdCount { get; set; }    // For RecId strategy
+    public int? DaysCount { get; set; }     // For ModifiedDate strategy
+    public string WhereClause { get; set; } // Custom WHERE condition (without WHERE keyword)
+    public bool UseTruncate { get; set; }   // -truncate flag
+
     // Tier2 Info
     public long Tier2RowCount { get; set; }
     public decimal Tier2SizeGB { get; set; }
     public string FetchSql { get; set; }
-    
+
     // Field Info
     public List<string> CopyableFields { get; set; }
-    
+
     // Execution State
     public TableStatus Status { get; set; }
     public int RecordsFetched { get; set; }
@@ -855,7 +970,7 @@ public class TableInfo
     public decimal FetchTimeSeconds { get; set; }
     public decimal InsertTimeSeconds { get; set; }
     public string Error { get; set; }
-    
+
     // Cached Data (not persisted)
     public DataTable CachedData { get; set; }
 }
@@ -873,8 +988,12 @@ public enum TableStatus
 
 public enum CopyStrategyType
 {
-    RecId,
-    ModifiedDate
+    RecId,                  // Number only
+    ModifiedDate,           // days:N
+    Where,                  // where:condition only
+    RecIdWithWhere,         // Number + where:condition
+    ModifiedDateWithWhere,  // days:N + where:condition
+    All                     // Full table
 }
 ```
 
@@ -886,17 +1005,18 @@ public class AppConfiguration
     public string ConfigName { get; set; }
     public DateTime LastModified { get; set; }
     public string Alias { get; set; }  // Max 30 chars, used for tab title and default save name
-    
+
     public ConnectionSettings Tier2Connection { get; set; }
     public ConnectionSettings AxDbConnection { get; set; }
-    
+
     public string TablesToInclude { get; set; }  // Multiline
     public string TablesToExclude { get; set; }  // Multiline
+    public string SystemExcludedTables { get; set; }  // Multiline, system-level exclusions
     public string FieldsToExclude { get; set; }  // Multiline
-    
+
     public int DefaultRecordCount { get; set; }
-    public string StrategyOverrides { get; set; }  // Multiline
-    
+    public string StrategyOverrides { get; set; }  // Multiline, pipe-delimited format
+
     public int ParallelFetchConnections { get; set; }
     public int ParallelInsertConnections { get; set; }
 }

@@ -39,11 +39,19 @@ namespace DBCopyTool
             // Enable sorting for all columns
             dgvTables.AllowUserToOrderColumns = true;
 
-            // Add context menu for copying table name
+            // Add context menu for copying table name and getting SQL
             var contextMenu = new ContextMenuStrip();
+
             var copyTableNameItem = new ToolStripMenuItem("Copy Table Name");
             copyTableNameItem.Click += CopyTableName_Click;
             contextMenu.Items.Add(copyTableNameItem);
+
+            contextMenu.Items.Add(new ToolStripSeparator());
+
+            var getSqlItem = new ToolStripMenuItem("Get SQL");
+            getSqlItem.Click += GetSql_Click;
+            contextMenu.Items.Add(getSqlItem);
+
             dgvTables.ContextMenuStrip = contextMenu;
 
             dgvTables.Columns.Add(new DataGridViewTextBoxColumn
@@ -502,6 +510,162 @@ namespace DBCopyTool
                     Log($"Copied table name to clipboard: {tableInfo.TableName}");
                 }
             }
+        }
+
+        private void GetSql_Click(object? sender, EventArgs e)
+        {
+            if (dgvTables.SelectedRows.Count == 0)
+            {
+                MessageBox.Show("No tables selected", "Information", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var sqlBuilder = new System.Text.StringBuilder();
+
+            foreach (DataGridViewRow row in dgvTables.SelectedRows)
+            {
+                var tableInfo = row.DataBoundItem as TableInfo;
+                if (tableInfo == null)
+                    continue;
+
+                sqlBuilder.AppendLine(GenerateSqlForTable(tableInfo));
+                sqlBuilder.AppendLine();
+            }
+
+            string sql = sqlBuilder.ToString();
+            Clipboard.SetText(sql);
+
+            UpdateStatus("SQL copied to clipboard");
+            Log($"Generated and copied SQL for {dgvTables.SelectedRows.Count} table(s) to clipboard");
+        }
+
+        private string GenerateSqlForTable(TableInfo table)
+        {
+            var sql = new System.Text.StringBuilder();
+
+            // Header
+            sql.AppendLine("-- ============================================");
+            sql.AppendLine($"-- Table: {table.TableName}");
+            sql.AppendLine($"-- Strategy: {table.StrategyDisplay}");
+            sql.AppendLine($"-- Cleanup: {GetCleanupDescription(table)}");
+            sql.AppendLine("-- ============================================");
+            sql.AppendLine();
+
+            // Source Query
+            sql.AppendLine("-- === SOURCE QUERY (Tier2) ===");
+            sql.AppendLine(table.FetchSql);
+            sql.AppendLine();
+
+            // Cleanup Queries
+            sql.AppendLine("-- === CLEANUP QUERIES (AxDB) ===");
+            sql.AppendLine(GenerateCleanupSql(table));
+            sql.AppendLine();
+
+            // Insert
+            sql.AppendLine("-- === INSERT ===");
+            sql.AppendLine("-- SqlBulkCopy will be used to insert fetched records");
+            sql.AppendLine();
+
+            // Sequence Update
+            sql.AppendLine("-- === SEQUENCE UPDATE ===");
+            sql.AppendLine($"DECLARE @MaxRecId BIGINT = (SELECT MAX(RECID) FROM [{table.TableName}])");
+            sql.AppendLine($"DECLARE @TableId INT = {table.TableId} -- Actual TableId from SQLDICTIONARY");
+            sql.AppendLine($"IF @MaxRecId > (SELECT CAST(current_value AS BIGINT) FROM sys.sequences WHERE name = 'SEQ_{table.TableId}')");
+            sql.AppendLine($"    ALTER SEQUENCE [SEQ_{table.TableId}] RESTART WITH @MaxRecId");
+
+            return sql.ToString();
+        }
+
+        private string GetCleanupDescription(TableInfo table)
+        {
+            if (table.UseTruncate || table.StrategyType == DBCopyTool.Models.CopyStrategyType.All)
+                return "TRUNCATE";
+
+            switch (table.StrategyType)
+            {
+                case DBCopyTool.Models.CopyStrategyType.RecId:
+                    return "Delete by RecId";
+                case DBCopyTool.Models.CopyStrategyType.ModifiedDate:
+                    return "Delete by ModifiedDateTime + RecId list";
+                case DBCopyTool.Models.CopyStrategyType.Where:
+                    return "Delete by WHERE + RecId";
+                case DBCopyTool.Models.CopyStrategyType.RecIdWithWhere:
+                    return "Delete by WHERE + RecId";
+                case DBCopyTool.Models.CopyStrategyType.ModifiedDateWithWhere:
+                    return "Delete by ModifiedDateTime + WHERE + RecId list";
+                default:
+                    return "Unknown";
+            }
+        }
+
+        private string GenerateCleanupSql(TableInfo table)
+        {
+            var sql = new System.Text.StringBuilder();
+
+            if (table.UseTruncate || table.StrategyType == DBCopyTool.Models.CopyStrategyType.All)
+            {
+                sql.AppendLine($"TRUNCATE TABLE [{table.TableName}]");
+                return sql.ToString();
+            }
+
+            int stepNumber = 1;
+
+            switch (table.StrategyType)
+            {
+                case DBCopyTool.Models.CopyStrategyType.RecId:
+                    sql.AppendLine($"DELETE FROM [{table.TableName}]");
+                    sql.AppendLine("WHERE RECID >= @MinRecId");
+                    sql.AppendLine("-- Note: @MinRecId will be determined after fetching source data");
+                    break;
+
+                case DBCopyTool.Models.CopyStrategyType.ModifiedDate:
+                    sql.AppendLine($"-- Step {stepNumber++}: Delete by ModifiedDateTime");
+                    sql.AppendLine($"DELETE FROM [{table.TableName}]");
+                    sql.AppendLine("WHERE [MODIFIEDDATETIME] >= @MinModifiedDateTime");
+                    sql.AppendLine();
+                    sql.AppendLine($"-- Step {stepNumber++}: Delete by RecId (matching fetched records)");
+                    sql.AppendLine($"DELETE FROM [{table.TableName}]");
+                    sql.AppendLine("WHERE RECID IN (@FetchedRecIdList)");
+                    break;
+
+                case DBCopyTool.Models.CopyStrategyType.Where:
+                    sql.AppendLine($"-- Step {stepNumber++}: Delete by custom WHERE condition");
+                    sql.AppendLine($"DELETE FROM [{table.TableName}]");
+                    sql.AppendLine($"WHERE {table.WhereClause}");
+                    sql.AppendLine();
+                    sql.AppendLine($"-- Step {stepNumber++}: Delete by RecId (>= minimum from source)");
+                    sql.AppendLine($"DELETE FROM [{table.TableName}]");
+                    sql.AppendLine("WHERE RECID >= @MinRecId");
+                    sql.AppendLine("-- Note: @MinRecId will be determined after fetching source data");
+                    break;
+
+                case DBCopyTool.Models.CopyStrategyType.RecIdWithWhere:
+                    sql.AppendLine($"-- Step {stepNumber++}: Delete by custom WHERE condition");
+                    sql.AppendLine($"DELETE FROM [{table.TableName}]");
+                    sql.AppendLine($"WHERE {table.WhereClause}");
+                    sql.AppendLine();
+                    sql.AppendLine($"-- Step {stepNumber++}: Delete by RecId (>= minimum from source)");
+                    sql.AppendLine($"DELETE FROM [{table.TableName}]");
+                    sql.AppendLine("WHERE RECID >= @MinRecId");
+                    sql.AppendLine("-- Note: @MinRecId will be determined after fetching source data");
+                    break;
+
+                case DBCopyTool.Models.CopyStrategyType.ModifiedDateWithWhere:
+                    sql.AppendLine($"-- Step {stepNumber++}: Delete by ModifiedDateTime");
+                    sql.AppendLine($"DELETE FROM [{table.TableName}]");
+                    sql.AppendLine("WHERE [MODIFIEDDATETIME] >= @MinModifiedDateTime");
+                    sql.AppendLine();
+                    sql.AppendLine($"-- Step {stepNumber++}: Delete by custom WHERE condition");
+                    sql.AppendLine($"DELETE FROM [{table.TableName}]");
+                    sql.AppendLine($"WHERE {table.WhereClause}");
+                    sql.AppendLine();
+                    sql.AppendLine($"-- Step {stepNumber++}: Delete by RecId (matching fetched records)");
+                    sql.AppendLine($"DELETE FROM [{table.TableName}]");
+                    sql.AppendLine("WHERE RECID IN (@FetchedRecIdList)");
+                    break;
+            }
+
+            return sql.ToString();
         }
 
         private void ExitToolStripMenuItem_Click(object sender, EventArgs e)

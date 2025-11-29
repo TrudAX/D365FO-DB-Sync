@@ -247,7 +247,8 @@ namespace DBCopyTool
             txtTablesToInclude.Location = new Point(10, 45);
             txtTablesToInclude.Multiline = true;
             txtTablesToInclude.Name = "txtTablesToInclude";
-            txtTablesToInclude.ScrollBars = ScrollBars.Vertical;
+            txtTablesToInclude.ScrollBars = ScrollBars.Both;
+            txtTablesToInclude.WordWrap = false;
             txtTablesToInclude.Size = new Size(315, 145);
 
             // Column 2: Tables to Exclude
@@ -265,7 +266,8 @@ namespace DBCopyTool
             txtTablesToExclude.Location = new Point(10, 45);
             txtTablesToExclude.Multiline = true;
             txtTablesToExclude.Name = "txtTablesToExclude";
-            txtTablesToExclude.ScrollBars = ScrollBars.Vertical;
+            txtTablesToExclude.ScrollBars = ScrollBars.Both;
+            txtTablesToExclude.WordWrap = false;
             txtTablesToExclude.Size = new Size(315, 145);
 
             // Column 3: Copy strategy
@@ -281,17 +283,29 @@ namespace DBCopyTool
             lblStrategyOverrides.Text = "Per-Table Strategy (?)";
             ToolTip tooltip = new ToolTip();
             tooltip.SetToolTip(lblStrategyOverrides,
-                "Format:\n" +
-                "  TableName:RecordCount     (RecId strategy)\n" +
-                "  TableName:days:DayCount   (ModifiedDate strategy)\n\n" +
+                "Format: TableName|SourceStrategy|where:condition -truncate\n\n" +
+                "Source strategies:\n" +
+                "  5000              Top N records by RecId\n" +
+                "  days:30           Records modified in last N days\n" +
+                "  all               Full table copy (truncates destination)\n" +
+                "  where:FIELD='X'   All records matching condition\n\n" +
+                "Combinations:\n" +
+                "  5000|where:DATAAREAID='1000'      Top N with filter\n" +
+                "  days:30|where:DATAAREAID='1000'   Last N days with filter\n\n" +
+                "Options:\n" +
+                "  -truncate         Truncate destination before insert\n\n" +
                 "Examples:\n" +
-                "  CUSTTABLE:5000\n" +
-                "  SALESLINE:days:30");
+                "  CUSTTABLE|5000\n" +
+                "  SALESLINE|days:30\n" +
+                "  INVENTTRANS|all\n" +
+                "  CUSTTRANS|5000|where:DATAAREAID='1000'\n" +
+                "  VENDTABLE|days:14|where:POSTED=1 -truncate");
 
             txtStrategyOverrides.Location = new Point(10, 45);
             txtStrategyOverrides.Multiline = true;
             txtStrategyOverrides.Name = "txtStrategyOverrides";
-            txtStrategyOverrides.ScrollBars = ScrollBars.Vertical;
+            txtStrategyOverrides.ScrollBars = ScrollBars.Both;
+            txtStrategyOverrides.WordWrap = false;
             txtStrategyOverrides.Size = new Size(315, 145);
 
             // Column 4: Default Records & Fields to Exclude

@@ -173,6 +173,34 @@ namespace DBCopyTool.Services
         }
 
         /// <summary>
+        /// Fetches data using pre-generated SQL with optional date parameter
+        /// </summary>
+        public async Task<DataTable> FetchDataBySqlAsync(string tableName, string sql, int? days, CancellationToken cancellationToken)
+        {
+            _logger($"[Tier2 SQL] Fetching data from {tableName}: {sql}");
+
+            using var connection = new SqlConnection(_connectionString);
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = _connectionSettings.CommandTimeout;
+
+            // Add date parameter if needed (for ModifiedDate strategies)
+            if (days.HasValue)
+            {
+                DateTime cutoffDate = DateTime.UtcNow.AddDays(-days.Value);
+                command.Parameters.AddWithValue("@CutoffDate", cutoffDate);
+                _logger($"[Tier2 SQL] ModifiedDate cutoff: {cutoffDate:yyyy-MM-dd HH:mm:ss}");
+            }
+
+            var dataTable = new DataTable();
+
+            await connection.OpenAsync(cancellationToken);
+            using var adapter = new SqlDataAdapter(command);
+            adapter.Fill(dataTable);
+
+            return dataTable;
+        }
+
+        /// <summary>
         /// Executes a query and returns the result as a DataTable
         /// </summary>
         private async Task<DataTable> ExecuteQueryAsync(string query, CancellationToken cancellationToken)

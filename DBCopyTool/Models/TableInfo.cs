@@ -10,7 +10,11 @@ namespace DBCopyTool.Models
 
         // Strategy
         public CopyStrategyType StrategyType { get; set; }
-        public int StrategyValue { get; set; }
+        public int StrategyValue { get; set; }  // Kept for backward compatibility
+        public int? RecIdCount { get; set; }     // For RecId strategy
+        public int? DaysCount { get; set; }      // For ModifiedDate strategy
+        public string WhereClause { get; set; } = string.Empty;  // Custom WHERE condition (without WHERE keyword)
+        public bool UseTruncate { get; set; }    // -truncate flag
 
         // Tier2 Info
         public long Tier2RowCount { get; set; }
@@ -32,9 +36,40 @@ namespace DBCopyTool.Models
         public DataTable? CachedData { get; set; }
 
         // Display properties for DataGridView
-        public string StrategyDisplay => StrategyType == CopyStrategyType.RecId
-            ? $"RecId:{StrategyValue}"
-            : $"Days:{StrategyValue}";
+        public string StrategyDisplay
+        {
+            get
+            {
+                var parts = new List<string>();
+
+                switch (StrategyType)
+                {
+                    case CopyStrategyType.RecId:
+                        parts.Add($"RecId:{RecIdCount ?? StrategyValue}");
+                        break;
+                    case CopyStrategyType.ModifiedDate:
+                        parts.Add($"Days:{DaysCount ?? StrategyValue}");
+                        break;
+                    case CopyStrategyType.Where:
+                        parts.Add("WHERE");
+                        break;
+                    case CopyStrategyType.RecIdWithWhere:
+                        parts.Add($"RecId:{RecIdCount ?? StrategyValue}+WHERE");
+                        break;
+                    case CopyStrategyType.ModifiedDateWithWhere:
+                        parts.Add($"Days:{DaysCount ?? StrategyValue}+WHERE");
+                        break;
+                    case CopyStrategyType.All:
+                        parts.Add("ALL");
+                        break;
+                }
+
+                if (UseTruncate)
+                    parts.Add("TRUNC");
+
+                return string.Join(" ", parts);
+            }
+        }
 
         public string Tier2SizeGBDisplay => Tier2SizeGB.ToString("F2");
         public string FetchTimeDisplay => FetchTimeSeconds > 0 ? FetchTimeSeconds.ToString("F2") : "";
@@ -55,7 +90,11 @@ namespace DBCopyTool.Models
 
     public enum CopyStrategyType
     {
-        RecId,
-        ModifiedDate
+        RecId,                  // Number only
+        ModifiedDate,           // days:N
+        Where,                  // where:condition only
+        RecIdWithWhere,         // Number + where:condition
+        ModifiedDateWithWhere,  // days:N + where:condition
+        All                     // Full table
     }
 }

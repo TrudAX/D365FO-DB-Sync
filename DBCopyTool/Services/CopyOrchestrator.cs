@@ -103,7 +103,7 @@ namespace DBCopyTool.Services
                     }
 
                     // Determine copy strategy
-                    var (strategyType, strategyValue) = GetStrategy(tableName, strategyOverrides);
+                    var strategy = GetStrategy(tableName, strategyOverrides);
 
                     // Get fields from caches (no database queries!)
                     var tier2Fields = tier2Cache.GetFields(tier2TableId.Value) ?? new List<string>();
@@ -132,7 +132,8 @@ namespace DBCopyTool.Services
                     }
 
                     // Verify ModifiedDate strategy requirements
-                    if (strategyType == CopyStrategyType.ModifiedDate)
+                    if (strategy.StrategyType == CopyStrategyType.ModifiedDate ||
+                        strategy.StrategyType == CopyStrategyType.ModifiedDateWithWhere)
                     {
                         if (!copyableFields.Any(f => f.Equals("MODIFIEDDATETIME", StringComparison.OrdinalIgnoreCase)))
                         {
@@ -154,15 +155,19 @@ namespace DBCopyTool.Services
                     }
 
                     // Generate fetch SQL
-                    string fetchSql = GenerateFetchSql(tableName, copyableFields, strategyType, strategyValue);
+                    string fetchSql = GenerateFetchSql(tableName, copyableFields, strategy);
 
                     // Create TableInfo
                     var tableInfo = new TableInfo
                     {
                         TableName = tableName,
                         TableId = tier2TableId.Value,
-                        StrategyType = strategyType,
-                        StrategyValue = strategyValue,
+                        StrategyType = strategy.StrategyType,
+                        StrategyValue = strategy.RecIdCount ?? strategy.DaysCount ?? 0,  // Backward compatibility
+                        RecIdCount = strategy.RecIdCount,
+                        DaysCount = strategy.DaysCount,
+                        WhereClause = strategy.WhereClause,
+                        UseTruncate = strategy.UseTruncate,
                         Tier2RowCount = rowCount,
                         Tier2SizeGB = sizeGB,
                         FetchSql = fetchSql,
@@ -373,23 +378,12 @@ namespace DBCopyTool.Services
 
             try
             {
-                DataTable data;
-                if (table.StrategyType == CopyStrategyType.RecId)
-                {
-                    data = await _tier2Service.FetchDataByRecIdAsync(
-                        table.TableName,
-                        table.CopyableFields,
-                        table.StrategyValue,
-                        cancellationToken);
-                }
-                else
-                {
-                    data = await _tier2Service.FetchDataByModifiedDateAsync(
-                        table.TableName,
-                        table.CopyableFields,
-                        table.StrategyValue,
-                        cancellationToken);
-                }
+                // Use pre-generated SQL from FetchSql property
+                DataTable data = await _tier2Service.FetchDataBySqlAsync(
+                    table.TableName,
+                    table.FetchSql,
+                    table.DaysCount,
+                    cancellationToken);
 
                 table.CachedData = data;
                 table.RecordsFetched = data.Rows.Count;
@@ -450,51 +444,148 @@ namespace DBCopyTool.Services
             return minRecId == long.MaxValue ? 0 : minRecId;
         }
 
-        private Dictionary<string, (CopyStrategyType, int)> ParseStrategyOverrides(string overrides)
+        private Dictionary<string, StrategyOverride> ParseStrategyOverrides(string overrides)
         {
-            var result = new Dictionary<string, (CopyStrategyType, int)>(StringComparer.OrdinalIgnoreCase);
+            var result = new Dictionary<string, StrategyOverride>(StringComparer.OrdinalIgnoreCase);
 
             if (string.IsNullOrWhiteSpace(overrides))
                 return result;
 
             var lines = overrides.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            int lineNumber = 0;
 
             foreach (var line in lines)
             {
+                lineNumber++;
                 var trimmed = line.Trim();
                 if (string.IsNullOrEmpty(trimmed))
                     continue;
 
-                var parts = trimmed.Split(':');
-                if (parts.Length == 2)
+                try
                 {
-                    // Format: TableName:RecordCount
-                    string tableName = parts[0].Trim();
-                    if (int.TryParse(parts[1].Trim(), out int recordCount))
-                    {
-                        result[tableName] = (CopyStrategyType.RecId, recordCount);
-                    }
+                    var parsed = ParseStrategyLine(trimmed);
+                    result[parsed.TableName] = parsed;
                 }
-                else if (parts.Length == 3 && parts[1].Equals("days", StringComparison.OrdinalIgnoreCase))
+                catch (Exception ex)
                 {
-                    // Format: TableName:days:DayCount
-                    string tableName = parts[0].Trim();
-                    if (int.TryParse(parts[2].Trim(), out int dayCount))
-                    {
-                        result[tableName] = (CopyStrategyType.ModifiedDate, dayCount);
-                    }
+                    throw new Exception($"Line {lineNumber}: {ex.Message}\nLine text: {trimmed}");
                 }
             }
 
             return result;
         }
 
-        private (CopyStrategyType, int) GetStrategy(string tableName, Dictionary<string, (CopyStrategyType, int)> overrides)
+        private StrategyOverride ParseStrategyLine(string line)
+        {
+            // Check for -truncate flag at the end
+            bool useTruncate = false;
+            string workingLine = line;
+
+            if (line.EndsWith(" -truncate", StringComparison.OrdinalIgnoreCase))
+            {
+                useTruncate = true;
+                workingLine = line.Substring(0, line.Length - 10).Trim();
+            }
+
+            // Split by pipe
+            var parts = workingLine.Split('|');
+
+            if (parts.Length == 0 || string.IsNullOrWhiteSpace(parts[0]))
+                throw new Exception("Invalid format: missing table name");
+
+            string tableName = parts[0].Trim();
+            string sourceStrategy = parts.Length > 1 ? parts[1].Trim() : "";
+            string whereClause = "";
+
+            // Parse WHERE clause from any position after table name
+            for (int i = 2; i < parts.Length; i++)
+            {
+                if (parts[i].Trim().StartsWith("where:", StringComparison.OrdinalIgnoreCase))
+                {
+                    whereClause = parts[i].Trim().Substring(6).Trim();
+                    if (string.IsNullOrEmpty(whereClause))
+                        throw new Exception("Invalid format: empty WHERE condition");
+                    break;
+                }
+            }
+
+            // Parse source strategy
+            CopyStrategyType strategyType;
+            int? recIdCount = null;
+            int? daysCount = null;
+
+            if (string.IsNullOrEmpty(sourceStrategy))
+            {
+                // Default strategy
+                strategyType = string.IsNullOrEmpty(whereClause) ? CopyStrategyType.RecId : CopyStrategyType.RecIdWithWhere;
+                recIdCount = _config.DefaultRecordCount;
+            }
+            else if (sourceStrategy.Equals("all", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!string.IsNullOrEmpty(whereClause))
+                    throw new Exception("Invalid format: 'all' cannot be combined with WHERE clause");
+                strategyType = CopyStrategyType.All;
+                useTruncate = true; // 'all' implies truncate
+            }
+            else if (sourceStrategy.StartsWith("days:", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!int.TryParse(sourceStrategy.Substring(5), out int days) || days <= 0)
+                    throw new Exception($"Invalid format: '{sourceStrategy}' is not a valid days strategy");
+
+                daysCount = days;
+                strategyType = string.IsNullOrEmpty(whereClause) ? CopyStrategyType.ModifiedDate : CopyStrategyType.ModifiedDateWithWhere;
+            }
+            else if (sourceStrategy.StartsWith("where:", StringComparison.OrdinalIgnoreCase))
+            {
+                // where: in second position
+                whereClause = sourceStrategy.Substring(6).Trim();
+                if (string.IsNullOrEmpty(whereClause))
+                    throw new Exception("Invalid format: empty WHERE condition");
+                strategyType = CopyStrategyType.Where;
+            }
+            else if (int.TryParse(sourceStrategy, out int count))
+            {
+                if (count <= 0)
+                    throw new Exception($"Invalid format: RecId count must be positive");
+
+                recIdCount = count;
+                strategyType = string.IsNullOrEmpty(whereClause) ? CopyStrategyType.RecId : CopyStrategyType.RecIdWithWhere;
+            }
+            else if (string.IsNullOrEmpty(sourceStrategy) && useTruncate)
+            {
+                throw new Exception("Invalid format: missing source strategy before -truncate");
+            }
+            else
+            {
+                throw new Exception($"Invalid format: '{sourceStrategy}' is not a valid strategy");
+            }
+
+            return new StrategyOverride
+            {
+                TableName = tableName,
+                StrategyType = strategyType,
+                RecIdCount = recIdCount,
+                DaysCount = daysCount,
+                WhereClause = whereClause,
+                UseTruncate = useTruncate
+            };
+        }
+
+        private StrategyOverride GetStrategy(string tableName, Dictionary<string, StrategyOverride> overrides)
         {
             if (overrides.TryGetValue(tableName, out var strategy))
                 return strategy;
 
-            return (CopyStrategyType.RecId, _config.DefaultRecordCount);
+            // Return default strategy
+            return new StrategyOverride
+            {
+                TableName = tableName,
+                StrategyType = CopyStrategyType.RecId,
+                RecIdCount = _config.DefaultRecordCount,
+                DaysCount = null,
+                WhereClause = string.Empty,
+                UseTruncate = false
+            };
         }
 
         private string CombineExclusionPatterns(string tablesToExclude, string systemExcludedTables)
@@ -584,17 +675,33 @@ namespace DBCopyTool.Services
             return result;
         }
 
-        private string GenerateFetchSql(string tableName, List<string> fields, CopyStrategyType strategyType, int strategyValue)
+        private string GenerateFetchSql(string tableName, List<string> fields, StrategyOverride strategy)
         {
             string fieldList = string.Join(", ", fields.Select(f => $"[{f}]"));
+            string whereClause = string.IsNullOrEmpty(strategy.WhereClause) ? "" : $" WHERE {strategy.WhereClause}";
 
-            if (strategyType == CopyStrategyType.RecId)
+            switch (strategy.StrategyType)
             {
-                return $"SELECT TOP ({strategyValue}) {fieldList} FROM [{tableName}] ORDER BY RecId DESC";
-            }
-            else
-            {
-                return $"SELECT {fieldList} FROM [{tableName}] WHERE [MODIFIEDDATETIME] > @CutoffDate";
+                case CopyStrategyType.RecId:
+                    return $"SELECT TOP ({strategy.RecIdCount}) {fieldList} FROM [{tableName}] ORDER BY RecId DESC";
+
+                case CopyStrategyType.ModifiedDate:
+                    return $"SELECT {fieldList} FROM [{tableName}] WHERE [MODIFIEDDATETIME] > @CutoffDate";
+
+                case CopyStrategyType.Where:
+                    return $"SELECT {fieldList} FROM [{tableName}]{whereClause}";
+
+                case CopyStrategyType.RecIdWithWhere:
+                    return $"SELECT TOP ({strategy.RecIdCount}) {fieldList} FROM [{tableName}]{whereClause} ORDER BY RecId DESC";
+
+                case CopyStrategyType.ModifiedDateWithWhere:
+                    return $"SELECT {fieldList} FROM [{tableName}] WHERE [MODIFIEDDATETIME] > @CutoffDate AND ({strategy.WhereClause})";
+
+                case CopyStrategyType.All:
+                    return $"SELECT {fieldList} FROM [{tableName}]";
+
+                default:
+                    throw new Exception($"Unsupported strategy type: {strategy.StrategyType}");
             }
         }
 
@@ -607,5 +714,16 @@ namespace DBCopyTool.Services
         {
             StatusUpdated?.Invoke(this, status);
         }
+    }
+
+    // Helper class for strategy parsing
+    public class StrategyOverride
+    {
+        public string TableName { get; set; } = string.Empty;
+        public CopyStrategyType StrategyType { get; set; }
+        public int? RecIdCount { get; set; }
+        public int? DaysCount { get; set; }
+        public string WhereClause { get; set; } = string.Empty;
+        public bool UseTruncate { get; set; }
     }
 }
