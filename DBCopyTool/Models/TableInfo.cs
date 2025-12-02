@@ -19,6 +19,9 @@ namespace DBCopyTool.Models
         // Tier2 Info
         public long Tier2RowCount { get; set; }
         public decimal Tier2SizeGB { get; set; }
+        public long BytesPerRow { get; set; }
+        public long RecordsToCopy { get; set; }
+        public decimal EstimatedSizeMB { get; set; }
         public string FetchSql { get; set; } = string.Empty;
 
         // Field Info
@@ -75,6 +78,7 @@ namespace DBCopyTool.Models
         public string FetchTimeDisplay => FetchTimeSeconds > 0 ? FetchTimeSeconds.ToString("F2") : "";
         public string InsertTimeDisplay => InsertTimeSeconds > 0 ? InsertTimeSeconds.ToString("F2") : "";
         public string Tier2RowCountDisplay => Tier2RowCount.ToString("N0");
+        public string EstimatedSizeMBDisplay => EstimatedSizeMB > 0 ? EstimatedSizeMB.ToString("F2") : "";
     }
 
     public enum TableStatus

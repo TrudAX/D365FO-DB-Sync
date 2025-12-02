@@ -23,7 +23,7 @@ namespace DBCopyTool
 
             // Initialize timer for UI updates
             _updateTimer = new System.Windows.Forms.Timer();
-            _updateTimer.Interval = 500;
+            _updateTimer.Interval = 3000;
             _updateTimer.Tick += UpdateTimer_Tick;
 
             InitializeDataGrid();
@@ -82,6 +82,16 @@ namespace DBCopyTool
                 HeaderText = "Strategy",
                 Name = "Strategy",
                 Width = 100,
+                SortMode = DataGridViewColumnSortMode.Automatic
+            });
+
+            dgvTables.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                DataPropertyName = "EstimatedSizeMBDisplay",
+                HeaderText = "Est Size (MB)",
+                Name = "EstimatedSizeMB",
+                Width = 100,
+                DefaultCellStyle = new DataGridViewCellStyle { Alignment = DataGridViewContentAlignment.MiddleRight },
                 SortMode = DataGridViewColumnSortMode.Automatic
             });
 
@@ -581,6 +591,14 @@ namespace DBCopyTool
 
         private string GetCleanupDescription(TableInfo table)
         {
+            // Check for TRUNCATE optimization (same logic as AxDbDataService)
+            if (table.Tier2RowCount > 0 &&
+                table.RecordsToCopy > 0 &&
+                table.Tier2RowCount <= table.RecordsToCopy &&
+                !table.UseTruncate &&
+                table.StrategyType != DBCopyTool.Models.CopyStrategyType.All)
+                return "TRUNCATE (optimization: copying all Tier2 rows)";
+
             if (table.UseTruncate || table.StrategyType == DBCopyTool.Models.CopyStrategyType.All)
                 return "TRUNCATE";
 
@@ -604,6 +622,19 @@ namespace DBCopyTool
         private string GenerateCleanupSql(TableInfo table)
         {
             var sql = new System.Text.StringBuilder();
+
+            // Check for TRUNCATE optimization (same logic as AxDbDataService)
+            if (table.Tier2RowCount > 0 &&
+                table.RecordsToCopy > 0 &&
+                table.Tier2RowCount <= table.RecordsToCopy &&
+                !table.UseTruncate &&
+                table.StrategyType != DBCopyTool.Models.CopyStrategyType.All)
+            {
+                sql.AppendLine($"-- Optimization: Tier2 has {table.Tier2RowCount} rows, copying {table.RecordsToCopy}");
+                sql.AppendLine($"-- Using TRUNCATE instead of DELETE for better performance");
+                sql.AppendLine($"TRUNCATE TABLE [{table.TableName}]");
+                return sql.ToString();
+            }
 
             if (table.UseTruncate || table.StrategyType == DBCopyTool.Models.CopyStrategyType.All)
             {
@@ -1064,6 +1095,11 @@ namespace DBCopyTool
                     sortedItems = direction == ListSortDirection.Ascending
                         ? items.OrderBy(x => x.StrategyDisplay)
                         : items.OrderByDescending(x => x.StrategyDisplay);
+                    break;
+                case "EstimatedSizeMBDisplay":
+                    sortedItems = direction == ListSortDirection.Ascending
+                        ? items.OrderBy(x => x.EstimatedSizeMB)
+                        : items.OrderByDescending(x => x.EstimatedSizeMB);
                     break;
                 case "Tier2RowCountDisplay":
                     sortedItems = direction == ListSortDirection.Ascending

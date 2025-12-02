@@ -100,13 +100,13 @@ namespace DBCopyTool.Services
             {
                 _logger($"[AxDB] Starting insert for table {tableInfo.TableName} ({tableInfo.CachedData.Rows.Count} rows)");
 
-                // Step 1: Delete existing records based on strategy
-                await DeleteExistingRecordsAsync(tableInfo, connection, transaction, cancellationToken);
-
-                // Step 2: Disable triggers
+                // Step 1: Disable triggers (BEFORE any DELETE or INSERT operations)
                 string disableTriggersSql = $"ALTER TABLE [{tableInfo.TableName}] DISABLE TRIGGER ALL";
                 _logger($"[AxDB SQL] {disableTriggersSql}");
                 await ExecuteNonQueryAsync(disableTriggersSql, connection, transaction);
+
+                // Step 2: Delete existing records based on strategy
+                await DeleteExistingRecordsAsync(tableInfo, connection, transaction, cancellationToken);
 
                 // Step 3: Bulk insert data
                 _logger($"[AxDB] Bulk inserting {tableInfo.CachedData.Rows.Count} rows into {tableInfo.TableName}");
@@ -162,6 +162,25 @@ namespace DBCopyTool.Services
         {
             if (tableInfo.CachedData == null || tableInfo.CachedData.Rows.Count == 0)
                 return;
+
+            // Optimization: If Tier2 has fewer rows than we're configured to copy, use TRUNCATE
+            // This means we're copying the entire source table, so TRUNCATE is much faster than DELETE
+            if (tableInfo.Tier2RowCount > 0 &&
+                tableInfo.RecordsToCopy > 0 &&
+                tableInfo.Tier2RowCount <= tableInfo.RecordsToCopy &&
+                !tableInfo.UseTruncate &&
+                tableInfo.StrategyType != CopyStrategyType.All)
+            {
+                _logger($"[AxDB] Optimization: Tier2 has {tableInfo.Tier2RowCount} rows, copying {tableInfo.RecordsToCopy} - using TRUNCATE instead of DELETE");
+
+                string truncateQuery = $"TRUNCATE TABLE [{tableInfo.TableName}]";
+                _logger($"[AxDB SQL] {truncateQuery}");
+
+                using var command = new SqlCommand(truncateQuery, connection, transaction);
+                command.CommandTimeout = _connectionSettings.CommandTimeout;
+                await command.ExecuteNonQueryAsync(cancellationToken);
+                return;
+            }
 
             // If UseTruncate flag is set or strategy is All, always truncate
             if (tableInfo.UseTruncate || tableInfo.StrategyType == CopyStrategyType.All)

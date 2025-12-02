@@ -26,7 +26,7 @@ namespace DBCopyTool.Services
             _logger = logger;
         }
 
-        public List<TableInfo> GetTables() => _tables;
+        public List<TableInfo> GetTables() => _tables.ToList();
 
         /// <summary>
         /// Stage 1: Discover Tables
@@ -146,7 +146,8 @@ namespace DBCopyTool.Services
                                 Status = TableStatus.FetchError,
                                 Error = "MODIFIEDDATETIME column not found",
                                 Tier2RowCount = rowCount,
-                                Tier2SizeGB = sizeGB
+                                Tier2SizeGB = sizeGB,
+                                BytesPerRow = bytesPerRow
                             };
                             _tables.Add(errorTable);
                             skipped++;
@@ -156,6 +157,20 @@ namespace DBCopyTool.Services
 
                     // Generate fetch SQL
                     string fetchSql = GenerateFetchSql(tableName, copyableFields, strategy);
+
+                    // Calculate records to copy based on strategy
+                    long recordsToCopy = strategy.StrategyType switch
+                    {
+                        CopyStrategyType.RecId or CopyStrategyType.RecIdWithWhere => strategy.RecIdCount ?? 0,
+                        CopyStrategyType.All => rowCount,
+                        _ => rowCount  // For ModifiedDate/Where, use Tier2RowCount as rough estimate
+                    };
+
+                    // Calculate estimated size in MB using minimum of RecordsToCopy and Tier2RowCount
+                    long recordsForCalculation = Math.Min(recordsToCopy, rowCount);
+                    decimal estimatedSizeMB = bytesPerRow > 0 && recordsForCalculation > 0
+                        ? (decimal)bytesPerRow * recordsForCalculation / 1_000_000m
+                        : 0;
 
                     // Create TableInfo
                     var tableInfo = new TableInfo
@@ -170,6 +185,9 @@ namespace DBCopyTool.Services
                         UseTruncate = strategy.UseTruncate,
                         Tier2RowCount = rowCount,
                         Tier2SizeGB = sizeGB,
+                        BytesPerRow = bytesPerRow,
+                        RecordsToCopy = recordsToCopy,
+                        EstimatedSizeMB = estimatedSizeMB,
                         FetchSql = fetchSql,
                         CopyableFields = copyableFields,
                         Status = TableStatus.Pending
@@ -179,8 +197,11 @@ namespace DBCopyTool.Services
                     processed++;
                 }
 
-                _logger($"Prepared {processed} tables, {skipped} skipped");
-                OnStatusUpdated($"Prepared {processed} tables, {skipped} skipped");
+                // Calculate total estimated size
+                decimal totalEstimatedMB = _tables.Sum(t => t.EstimatedSizeMB);
+
+                _logger($"Prepared {processed} tables, {skipped} skipped, {totalEstimatedMB:F2} MB to copy");
+                OnStatusUpdated($"Prepared {processed} tables, {skipped} skipped, {totalEstimatedMB:F2} MB to copy");
                 OnTablesUpdated();
             }
             catch (OperationCanceledException)
@@ -389,6 +410,14 @@ namespace DBCopyTool.Services
                 table.RecordsFetched = data.Rows.Count;
                 table.MinRecId = GetMinRecIdFromData(data);
                 table.FetchTimeSeconds = (decimal)stopwatch.Elapsed.TotalSeconds;
+
+                // Update records to copy and estimated size with actual fetched count
+                table.RecordsToCopy = data.Rows.Count;
+                long recordsForCalculation = Math.Min(data.Rows.Count, table.Tier2RowCount);
+                table.EstimatedSizeMB = table.BytesPerRow > 0 && recordsForCalculation > 0
+                    ? (decimal)table.BytesPerRow * recordsForCalculation / 1_000_000m
+                    : 0;
+
                 table.Status = TableStatus.Fetched;
 
                 _logger($"Fetched {table.TableName}: {table.RecordsFetched} records in {table.FetchTimeSeconds:F2}s");
