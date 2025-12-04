@@ -238,6 +238,7 @@ namespace DBCopyTool.Services
                     return;
                 }
 
+                var stopwatch = Stopwatch.StartNew();
                 int completed = 0;
                 int failed = 0;
                 var semaphore = new SemaphoreSlim(_config.ParallelWorkers);
@@ -254,7 +255,32 @@ namespace DBCopyTool.Services
                         else
                             Interlocked.Increment(ref failed);
 
-                        OnStatusUpdated($"Stage 2/2: Process Tables - {completed + failed}/{pendingTables.Count} tables");
+                        // Calculate progress and time estimates
+                        var elapsed = stopwatch.Elapsed;
+                        var processedCount = completed + failed;
+
+                        // Calculate MB processed and remaining
+                        decimal mbProcessed = _tables
+                            .Where(t => t.Status == TableStatus.Inserted)
+                            .Sum(t => t.EstimatedSizeMB);
+
+                        decimal mbRemaining = _tables
+                            .Where(t => t.Status == TableStatus.Pending || t.Status == TableStatus.Fetching || t.Status == TableStatus.Inserting)
+                            .Sum(t => t.EstimatedSizeMB);
+
+                        // Calculate estimated time left based on transfer rate
+                        string estimatedTimeStr = "";
+                        if (mbProcessed > 0 && elapsed.TotalSeconds > 0)
+                        {
+                            decimal mbPerSecond = mbProcessed / (decimal)elapsed.TotalSeconds;
+                            if (mbPerSecond > 0)
+                            {
+                                decimal estimatedSecondsLeft = mbRemaining / mbPerSecond;
+                                estimatedTimeStr = $" | Est: {FormatTime((int)estimatedSecondsLeft)}";
+                            }
+                        }
+
+                        OnStatusUpdated($"Process Tables - {processedCount}/{pendingTables.Count} | Elapsed: {FormatTime((int)elapsed.TotalSeconds)}{estimatedTimeStr}");
                     }
                     finally
                     {
@@ -265,8 +291,14 @@ namespace DBCopyTool.Services
 
                 await Task.WhenAll(tasks);
 
-                _logger($"Processed {completed} tables successfully, {failed} failed");
-                OnStatusUpdated($"Processed {completed} tables, {failed} failed");
+                stopwatch.Stop();
+                var totalTime = FormatTime((int)stopwatch.Elapsed.TotalSeconds);
+                var totalRecordsToCopy = pendingTables.Sum(t => t.RecordsToCopy);
+                var workers = _config.ParallelWorkers;
+                var alias = _config.Alias;
+
+                _logger($"Processed {completed} tables successfully, {failed} failed | Records: {totalRecordsToCopy:N0} | Workers: {workers} | Alias: {alias} | Total time: {totalTime}");
+                OnStatusUpdated($"Processed {completed} tables, {failed} failed | Time: {totalTime}");
             }
             catch (OperationCanceledException)
             {
@@ -444,6 +476,7 @@ namespace DBCopyTool.Services
             table.CachedData = null;
             table.RecordsFetched = 0;
             table.FetchTimeSeconds = 0;
+            table.DeleteTimeSeconds = 0;
             table.InsertTimeSeconds = 0;
             table.MinRecId = 0;
 
@@ -502,8 +535,6 @@ namespace DBCopyTool.Services
         /// </summary>
         private async Task ProcessSingleTableAsync(TableInfo table, CancellationToken cancellationToken)
         {
-            var totalStopwatch = Stopwatch.StartNew();
-
             try
             {
                 // STAGE 1: FETCH
@@ -535,22 +566,21 @@ namespace DBCopyTool.Services
                 // Check for cancellation before insert
                 cancellationToken.ThrowIfCancellationRequested();
 
-                // STAGE 2: INSERT
+                // STAGE 2: INSERT (includes delete and insert operations)
                 table.Status = TableStatus.Inserting;
                 OnTablesUpdated();
 
-                var insertStopwatch = Stopwatch.StartNew();
                 await _axDbService.InsertDataAsync(table, cancellationToken);
-                table.InsertTimeSeconds = (decimal)insertStopwatch.Elapsed.TotalSeconds;
 
-                _logger($"Inserted {table.TableName}: {table.RecordsFetched} records in {table.InsertTimeSeconds:F2}s");
+                _logger($"Deleted {table.TableName}: {table.DeleteTimeSeconds:F2}s, Inserted: {table.InsertTimeSeconds:F2}s");
 
                 // STAGE 3: CLEANUP MEMORY (on success only)
                 table.CachedData = null;  // Clear memory immediately
                 table.Status = TableStatus.Inserted;
                 table.Error = string.Empty;
 
-                _logger($"Completed {table.TableName}: Total time {totalStopwatch.Elapsed.TotalSeconds:F2}s");
+                var totalTime = table.FetchTimeSeconds + table.DeleteTimeSeconds + table.InsertTimeSeconds;
+                _logger($"Completed {table.TableName}: Total time {totalTime:F2}s (Fetch: {table.FetchTimeSeconds:F2}s, Delete: {table.DeleteTimeSeconds:F2}s, Insert: {table.InsertTimeSeconds:F2}s)");
             }
             catch (OperationCanceledException)
             {
@@ -815,6 +845,13 @@ namespace DBCopyTool.Services
             // Convert wildcard pattern to regex
             string regexPattern = "^" + Regex.Escape(pattern).Replace("\\*", ".*") + "$";
             return Regex.IsMatch(tableName, regexPattern, RegexOptions.IgnoreCase);
+        }
+
+        private string FormatTime(int totalSeconds)
+        {
+            int minutes = totalSeconds / 60;
+            int seconds = totalSeconds % 60;
+            return $"{minutes}:{seconds:D2}";
         }
 
         private Dictionary<string, List<string>> GetExcludedFieldsMap(string fieldsToExclude)

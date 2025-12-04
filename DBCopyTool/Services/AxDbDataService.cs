@@ -1,4 +1,5 @@
 using System.Data;
+using System.Diagnostics;
 using Microsoft.Data.SqlClient;
 using DBCopyTool.Models;
 
@@ -106,10 +107,14 @@ namespace DBCopyTool.Services
                 await ExecuteNonQueryAsync(disableTriggersSql, connection, transaction);
 
                 // Step 2: Delete existing records based on strategy
+                var deleteStopwatch = Stopwatch.StartNew();
                 await DeleteExistingRecordsAsync(tableInfo, connection, transaction, cancellationToken);
+                deleteStopwatch.Stop();
+                tableInfo.DeleteTimeSeconds = (decimal)deleteStopwatch.Elapsed.TotalSeconds;
 
                 // Step 3: Bulk insert data
                 _logger($"[AxDB] Bulk inserting {tableInfo.CachedData.Rows.Count} rows into {tableInfo.TableName}");
+                var insertStopwatch = Stopwatch.StartNew();
                 using (var bulkCopy = new SqlBulkCopy(connection, SqlBulkCopyOptions.TableLock, transaction))
                 {
                     bulkCopy.DestinationTableName = tableInfo.TableName;
@@ -124,6 +129,8 @@ namespace DBCopyTool.Services
 
                     await bulkCopy.WriteToServerAsync(tableInfo.CachedData, cancellationToken);
                 }
+                insertStopwatch.Stop();
+                tableInfo.InsertTimeSeconds = (decimal)insertStopwatch.Elapsed.TotalSeconds;
 
                 // Step 4: Enable triggers (always, even if errors occur)
                 string enableTriggersSql = $"ALTER TABLE [{tableInfo.TableName}] ENABLE TRIGGER ALL";

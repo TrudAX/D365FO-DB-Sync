@@ -99,6 +99,7 @@ namespace DBCopyTool
             btnProcessSelected = new Button();
             btnRunAll = new Button();
             btnStop = new Button();
+            btnCopyToClipboard = new Button();
 
             // Status
             lblStatus = new Label();
@@ -232,6 +233,7 @@ namespace DBCopyTool
             tabTables.Controls.Add(btnProcessSelected);
             tabTables.Controls.Add(btnRunAll);
             tabTables.Controls.Add(btnStop);
+            tabTables.Controls.Add(btnCopyToClipboard);
             tabTables.Controls.Add(lblStatus);
             tabTables.Controls.Add(dgvTables);
             tabTables.Controls.Add(lblSummary);
@@ -566,6 +568,12 @@ namespace DBCopyTool
             btnStop.Enabled = false;
             btnStop.Click += BtnStop_Click;
 
+            btnCopyToClipboard.Location = new Point(742, 250);
+            btnCopyToClipboard.Name = "btnCopyToClipboard";
+            btnCopyToClipboard.Size = new Size(140, 30);
+            btnCopyToClipboard.Text = "Copy to Clipboard";
+            btnCopyToClipboard.Click += BtnCopyToClipboard_Click;
+
             // Status Label (in Tables tab)
             lblStatus.AutoSize = true;
             lblStatus.Location = new Point(12, 290);
@@ -577,7 +585,7 @@ namespace DBCopyTool
             // Data Grid (in Tables tab)
             dgvTables.AllowUserToAddRows = false;
             dgvTables.AllowUserToDeleteRows = false;
-            dgvTables.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.AllCells;
+            dgvTables.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
             dgvTables.Location = new Point(12, 315);
             dgvTables.Name = "dgvTables";
             dgvTables.ReadOnly = true;
@@ -747,6 +755,7 @@ namespace DBCopyTool
         private Button btnProcessSelected;
         private Button btnRunAll;
         private Button btnStop;
+        private Button btnCopyToClipboard;
 
         // Status and Grid
         private Label lblStatus;

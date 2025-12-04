@@ -32,6 +32,7 @@ namespace DBCopyTool.Models
         public int RecordsFetched { get; set; }
         public long MinRecId { get; set; }
         public decimal FetchTimeSeconds { get; set; }
+        public decimal DeleteTimeSeconds { get; set; }
         public decimal InsertTimeSeconds { get; set; }
         public string Error { get; set; } = string.Empty;
 
@@ -76,6 +77,7 @@ namespace DBCopyTool.Models
 
         public string Tier2SizeGBDisplay => Tier2SizeGB.ToString("F2");
         public string FetchTimeDisplay => FetchTimeSeconds > 0 ? FetchTimeSeconds.ToString("F2") : "";
+        public string DeleteTimeDisplay => DeleteTimeSeconds > 0 ? DeleteTimeSeconds.ToString("F2") : "";
         public string InsertTimeDisplay => InsertTimeSeconds > 0 ? InsertTimeSeconds.ToString("F2") : "";
         public string Tier2RowCountDisplay => Tier2RowCount.ToString("N0");
         public string EstimatedSizeMBDisplay => EstimatedSizeMB > 0 ? EstimatedSizeMB.ToString("F2") : "";

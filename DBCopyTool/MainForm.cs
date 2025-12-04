@@ -36,8 +36,10 @@ namespace DBCopyTool
             dgvTables.AutoGenerateColumns = false;
             dgvTables.DataSource = _tablesBindingList;
 
-            // Enable sorting for all columns
+            // Enable sorting and column resizing (but not row resizing)
             dgvTables.AllowUserToOrderColumns = true;
+            dgvTables.AllowUserToResizeColumns = true;
+            dgvTables.AllowUserToResizeRows = false;
 
             // Add column header click event for sorting
             dgvTables.ColumnHeaderMouseClick += DgvTables_ColumnHeaderMouseClick;
@@ -150,6 +152,16 @@ namespace DBCopyTool
                 DataPropertyName = "FetchTimeDisplay",
                 HeaderText = "Fetch Time (s)",
                 Name = "FetchTime",
+                Width = 80,
+                DefaultCellStyle = new DataGridViewCellStyle { Alignment = DataGridViewContentAlignment.MiddleRight },
+                SortMode = DataGridViewColumnSortMode.Automatic
+            });
+
+            dgvTables.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                DataPropertyName = "DeleteTimeDisplay",
+                HeaderText = "Delete Time (s)",
+                Name = "DeleteTime",
                 Width = 80,
                 DefaultCellStyle = new DataGridViewCellStyle { Alignment = DataGridViewContentAlignment.MiddleRight },
                 SortMode = DataGridViewColumnSortMode.Automatic
@@ -333,10 +345,28 @@ namespace DBCopyTool
                 return;
             }
 
+            // Save current selection and scroll position
+            int selectedRowIndex = dgvTables.SelectedRows.Count > 0
+                ? dgvTables.SelectedRows[0].Index
+                : -1;
+            int firstDisplayedScrollingRowIndex = dgvTables.FirstDisplayedScrollingRowIndex;
+
             _tablesBindingList.Clear();
             foreach (var table in tables)
             {
                 _tablesBindingList.Add(table);
+            }
+
+            // Restore selection and scroll position
+            if (selectedRowIndex >= 0 && selectedRowIndex < dgvTables.Rows.Count)
+            {
+                dgvTables.ClearSelection();
+                dgvTables.Rows[selectedRowIndex].Selected = true;
+            }
+
+            if (firstDisplayedScrollingRowIndex >= 0 && firstDisplayedScrollingRowIndex < dgvTables.Rows.Count)
+            {
+                dgvTables.FirstDisplayedScrollingRowIndex = firstDisplayedScrollingRowIndex;
             }
 
             UpdateSummary(tables);
@@ -527,6 +557,71 @@ namespace DBCopyTool
         private void BtnClearLog_Click(object sender, EventArgs e)
         {
             txtLog.Clear();
+        }
+
+        private void BtnCopyToClipboard_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                if (_orchestrator == null || _orchestrator.GetTables().Count == 0)
+                {
+                    MessageBox.Show("No data to copy", "Information", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                var sb = new System.Text.StringBuilder();
+
+                // Add header row
+                var headers = new List<string>();
+                foreach (DataGridViewColumn column in dgvTables.Columns)
+                {
+                    if (column.Visible)
+                    {
+                        headers.Add(column.HeaderText);
+                    }
+                }
+                sb.AppendLine(string.Join("\t", headers));
+
+                // Add data rows
+                foreach (var table in _orchestrator.GetTables())
+                {
+                    var values = new List<string>();
+                    foreach (DataGridViewColumn column in dgvTables.Columns)
+                    {
+                        if (column.Visible)
+                        {
+                            string value = column.DataPropertyName switch
+                            {
+                                "TableName" => table.TableName,
+                                "TableId" => table.TableId.ToString(),
+                                "StrategyDisplay" => table.StrategyDisplay,
+                                "RecordsToCopy" => table.RecordsToCopy.ToString("N0"),
+                                "Tier2RowCountDisplay" => table.Tier2RowCountDisplay,
+                                "RecordsFetched" => table.RecordsFetched.ToString("N0"),
+                                "EstimatedSizeMBDisplay" => table.EstimatedSizeMBDisplay,
+                                "FetchTimeDisplay" => table.FetchTimeDisplay,
+                                "DeleteTimeDisplay" => table.DeleteTimeDisplay,
+                                "InsertTimeDisplay" => table.InsertTimeDisplay,
+                                "Status" => table.Status.ToString(),
+                                "Error" => table.Error,
+                                _ => ""
+                            };
+                            values.Add(value);
+                        }
+                    }
+                    sb.AppendLine(string.Join("\t", values));
+                }
+
+                Clipboard.SetText(sb.ToString());
+                Log($"Copied {_orchestrator.GetTables().Count} rows to clipboard (tab-delimited format for Excel)");
+                MessageBox.Show($"Copied {_orchestrator.GetTables().Count} rows to clipboard.\n\nYou can now paste into Excel.",
+                    "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error copying to clipboard: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                Log($"ERROR copying to clipboard: {ex.Message}");
+            }
         }
 
         private void DgvTables_SelectionChanged(object? sender, EventArgs e)
@@ -1157,6 +1252,11 @@ namespace DBCopyTool
                     sortedItems = direction == ListSortDirection.Ascending
                         ? items.OrderBy(x => x.FetchTimeSeconds)
                         : items.OrderByDescending(x => x.FetchTimeSeconds);
+                    break;
+                case "DeleteTimeDisplay":
+                    sortedItems = direction == ListSortDirection.Ascending
+                        ? items.OrderBy(x => x.DeleteTimeSeconds)
+                        : items.OrderByDescending(x => x.DeleteTimeSeconds);
                     break;
                 case "InsertTimeDisplay":
                     sortedItems = direction == ListSortDirection.Ascending
