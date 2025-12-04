@@ -218,9 +218,10 @@ namespace DBCopyTool.Services
         }
 
         /// <summary>
-        /// Stage 2: Fetch Data
+        /// Stage 2: Process Tables (Fetch + Insert merged)
+        /// Each worker fetches one table, inserts it, clears memory, then moves to next table
         /// </summary>
-        public async Task GetDataAsync()
+        public async Task ProcessTablesAsync()
         {
             _cancellationTokenSource = new CancellationTokenSource();
             var cancellationToken = _cancellationTokenSource.Token;
@@ -228,31 +229,32 @@ namespace DBCopyTool.Services
             try
             {
                 _logger("─────────────────────────────────────────────");
-                _logger("Starting Fetch Data...");
+                _logger("Starting Process Tables...");
 
                 var pendingTables = _tables.Where(t => t.Status == TableStatus.Pending).ToList();
                 if (pendingTables.Count == 0)
                 {
-                    _logger("No pending tables to fetch");
+                    _logger("No pending tables to process");
                     return;
                 }
 
                 int completed = 0;
                 int failed = 0;
-                var semaphore = new SemaphoreSlim(_config.ParallelFetchConnections);
+                var semaphore = new SemaphoreSlim(_config.ParallelWorkers);
 
                 var tasks = pendingTables.Select(async table =>
                 {
                     await semaphore.WaitAsync(cancellationToken);
                     try
                     {
-                        await FetchTableDataAsync(table, cancellationToken);
-                        if (table.Status == TableStatus.Fetched)
+                        await ProcessSingleTableAsync(table, cancellationToken);
+
+                        if (table.Status == TableStatus.Inserted)
                             Interlocked.Increment(ref completed);
                         else
                             Interlocked.Increment(ref failed);
 
-                        OnStatusUpdated($"Stage 2/3: Fetch Data - {completed + failed}/{pendingTables.Count} tables");
+                        OnStatusUpdated($"Stage 2/2: Process Tables - {completed + failed}/{pendingTables.Count} tables");
                     }
                     finally
                     {
@@ -263,12 +265,12 @@ namespace DBCopyTool.Services
 
                 await Task.WhenAll(tasks);
 
-                _logger($"Fetched {completed} tables, {failed} failed");
-                OnStatusUpdated($"Fetched {completed} tables, {failed} failed");
+                _logger($"Processed {completed} tables successfully, {failed} failed");
+                OnStatusUpdated($"Processed {completed} tables, {failed} failed");
             }
             catch (OperationCanceledException)
             {
-                _logger("Fetch Data cancelled");
+                _logger("Process Tables cancelled");
                 OnStatusUpdated("Cancelled");
             }
             catch (Exception ex)
@@ -280,25 +282,10 @@ namespace DBCopyTool.Services
         }
 
         /// <summary>
-        /// Stage 3: Insert Data
+        /// Stage 3: Retry Failed Tables
+        /// Retries tables with FetchError or InsertError status
         /// </summary>
-        public async Task InsertDataAsync()
-        {
-            await InsertDataInternalAsync(false);
-        }
-
-        /// <summary>
-        /// Stage 4: Retry Failed
-        /// </summary>
-        public async Task InsertFailedAsync()
-        {
-            await InsertDataInternalAsync(true);
-        }
-
-        /// <summary>
-        /// Internal method to insert data (for both Stage 3 and Stage 4)
-        /// </summary>
-        private async Task InsertDataInternalAsync(bool retryOnly)
+        public async Task RetryFailedAsync()
         {
             _cancellationTokenSource = new CancellationTokenSource();
             var cancellationToken = _cancellationTokenSource.Token;
@@ -306,35 +293,49 @@ namespace DBCopyTool.Services
             try
             {
                 _logger("─────────────────────────────────────────────");
-                string stageName = retryOnly ? "Retry Failed" : "Insert Data";
-                _logger($"Starting {stageName}...");
+                _logger("Starting Retry Failed...");
 
-                var tablesToInsert = retryOnly
-                    ? _tables.Where(t => t.Status == TableStatus.InsertError).ToList()
-                    : _tables.Where(t => t.Status == TableStatus.Fetched).ToList();
+                var failedTables = _tables
+                    .Where(t => t.Status == TableStatus.FetchError ||
+                               t.Status == TableStatus.InsertError)
+                    .ToList();
 
-                if (tablesToInsert.Count == 0)
+                if (failedTables.Count == 0)
                 {
-                    _logger($"No tables to insert");
+                    _logger("No failed tables to retry");
                     return;
                 }
 
+                _logger($"Retrying {failedTables.Count} failed tables");
+
+                // Reset failed tables to Pending for retry
+                foreach (var table in failedTables)
+                {
+                    table.Status = TableStatus.Pending;
+                    table.Error = string.Empty;
+                    // Clear cached data to force re-fetch with fresh data
+                    table.CachedData = null;
+                }
+
+                OnTablesUpdated();
+
                 int completed = 0;
                 int failed = 0;
-                var semaphore = new SemaphoreSlim(_config.ParallelInsertConnections);
+                var semaphore = new SemaphoreSlim(_config.ParallelWorkers);
 
-                var tasks = tablesToInsert.Select(async table =>
+                var tasks = failedTables.Select(async table =>
                 {
                     await semaphore.WaitAsync(cancellationToken);
                     try
                     {
-                        await InsertTableDataAsync(table, cancellationToken);
+                        await ProcessSingleTableAsync(table, cancellationToken);
+
                         if (table.Status == TableStatus.Inserted)
                             Interlocked.Increment(ref completed);
                         else
                             Interlocked.Increment(ref failed);
 
-                        OnStatusUpdated($"Stage 3/3: Insert Data - {completed + failed}/{tablesToInsert.Count} tables");
+                        OnStatusUpdated($"Retry Failed - {completed + failed}/{failedTables.Count} tables");
                     }
                     finally
                     {
@@ -345,12 +346,12 @@ namespace DBCopyTool.Services
 
                 await Task.WhenAll(tasks);
 
-                _logger($"Inserted {completed} tables, {failed} failed");
-                OnStatusUpdated($"Inserted {completed} tables, {failed} failed");
+                _logger($"Retry completed: {completed} succeeded, {failed} failed");
+                OnStatusUpdated($"Retry: {completed} succeeded, {failed} failed");
             }
             catch (OperationCanceledException)
             {
-                _logger("Insert Data cancelled");
+                _logger("Retry Failed cancelled");
                 OnStatusUpdated("Cancelled");
             }
             catch (Exception ex)
@@ -358,6 +359,88 @@ namespace DBCopyTool.Services
                 _logger($"ERROR: {ex.Message}");
                 OnStatusUpdated($"Error: {ex.Message}");
                 throw;
+            }
+        }
+
+        /// <summary>
+        /// Process a single table: fetch → insert → clear memory
+        /// </summary>
+        private async Task ProcessSingleTableAsync(TableInfo table, CancellationToken cancellationToken)
+        {
+            var totalStopwatch = Stopwatch.StartNew();
+
+            try
+            {
+                // STAGE 1: FETCH
+                table.Status = TableStatus.Fetching;
+                table.Error = string.Empty;
+                OnTablesUpdated();
+
+                var fetchStopwatch = Stopwatch.StartNew();
+                DataTable data = await _tier2Service.FetchDataBySqlAsync(
+                    table.TableName,
+                    table.FetchSql,
+                    table.DaysCount,
+                    cancellationToken);
+
+                table.CachedData = data;
+                table.RecordsFetched = data.Rows.Count;
+                table.MinRecId = GetMinRecIdFromData(data);
+                table.FetchTimeSeconds = (decimal)fetchStopwatch.Elapsed.TotalSeconds;
+
+                // Update records to copy and estimated size with actual fetched count
+                table.RecordsToCopy = data.Rows.Count;
+                long recordsForCalculation = Math.Min(data.Rows.Count, table.Tier2RowCount);
+                table.EstimatedSizeMB = table.BytesPerRow > 0 && recordsForCalculation > 0
+                    ? (decimal)table.BytesPerRow * recordsForCalculation / 1_000_000m
+                    : 0;
+
+                _logger($"Fetched {table.TableName}: {table.RecordsFetched} records in {table.FetchTimeSeconds:F2}s");
+
+                // Check for cancellation before insert
+                cancellationToken.ThrowIfCancellationRequested();
+
+                // STAGE 2: INSERT
+                table.Status = TableStatus.Inserting;
+                OnTablesUpdated();
+
+                var insertStopwatch = Stopwatch.StartNew();
+                await _axDbService.InsertDataAsync(table, cancellationToken);
+                table.InsertTimeSeconds = (decimal)insertStopwatch.Elapsed.TotalSeconds;
+
+                _logger($"Inserted {table.TableName}: {table.RecordsFetched} records in {table.InsertTimeSeconds:F2}s");
+
+                // STAGE 3: CLEANUP MEMORY (on success only)
+                table.CachedData = null;  // Clear memory immediately
+                table.Status = TableStatus.Inserted;
+                table.Error = string.Empty;
+
+                _logger($"Completed {table.TableName}: Total time {totalStopwatch.Elapsed.TotalSeconds:F2}s");
+            }
+            catch (OperationCanceledException)
+            {
+                // Keep CachedData for potential retry
+                table.Status = TableStatus.FetchError;
+                table.Error = "Cancelled";
+                _logger($"Cancelled {table.TableName}");
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // Determine which stage failed based on current status
+                if (table.Status == TableStatus.Fetching)
+                {
+                    table.Status = TableStatus.FetchError;
+                    table.CachedData = null; // No data to keep
+                }
+                else if (table.Status == TableStatus.Inserting)
+                {
+                    table.Status = TableStatus.InsertError;
+                    // Keep CachedData for retry
+                }
+
+                table.Error = ex.Message;
+                _logger($"ERROR processing {table.TableName}: {ex.Message}");
             }
         }
 
@@ -369,8 +452,7 @@ namespace DBCopyTool.Services
             try
             {
                 await PrepareTableListAsync();
-                await GetDataAsync();
-                await InsertDataAsync();
+                await ProcessTablesAsync();
             }
             catch (Exception ex)
             {
@@ -390,69 +472,6 @@ namespace DBCopyTool.Services
         }
 
         // ========== Helper Methods ==========
-
-        private async Task FetchTableDataAsync(TableInfo table, CancellationToken cancellationToken)
-        {
-            var stopwatch = Stopwatch.StartNew();
-            table.Status = TableStatus.Fetching;
-            OnTablesUpdated();
-
-            try
-            {
-                // Use pre-generated SQL from FetchSql property
-                DataTable data = await _tier2Service.FetchDataBySqlAsync(
-                    table.TableName,
-                    table.FetchSql,
-                    table.DaysCount,
-                    cancellationToken);
-
-                table.CachedData = data;
-                table.RecordsFetched = data.Rows.Count;
-                table.MinRecId = GetMinRecIdFromData(data);
-                table.FetchTimeSeconds = (decimal)stopwatch.Elapsed.TotalSeconds;
-
-                // Update records to copy and estimated size with actual fetched count
-                table.RecordsToCopy = data.Rows.Count;
-                long recordsForCalculation = Math.Min(data.Rows.Count, table.Tier2RowCount);
-                table.EstimatedSizeMB = table.BytesPerRow > 0 && recordsForCalculation > 0
-                    ? (decimal)table.BytesPerRow * recordsForCalculation / 1_000_000m
-                    : 0;
-
-                table.Status = TableStatus.Fetched;
-
-                _logger($"Fetched {table.TableName}: {table.RecordsFetched} records in {table.FetchTimeSeconds:F2}s");
-            }
-            catch (Exception ex)
-            {
-                table.Status = TableStatus.FetchError;
-                table.Error = ex.Message;
-                _logger($"ERROR fetching {table.TableName}: {ex.Message}");
-            }
-        }
-
-        private async Task InsertTableDataAsync(TableInfo table, CancellationToken cancellationToken)
-        {
-            var stopwatch = Stopwatch.StartNew();
-            table.Status = TableStatus.Inserting;
-            OnTablesUpdated();
-
-            try
-            {
-                await _axDbService.InsertDataAsync(table, cancellationToken);
-
-                table.InsertTimeSeconds = (decimal)stopwatch.Elapsed.TotalSeconds;
-                table.Status = TableStatus.Inserted;
-                table.Error = string.Empty;
-
-                _logger($"Inserted {table.TableName}: {table.RecordsFetched} records in {table.InsertTimeSeconds:F2}s");
-            }
-            catch (Exception ex)
-            {
-                table.Status = TableStatus.InsertError;
-                table.Error = ex.Message;
-                _logger($"ERROR inserting {table.TableName}: {ex.Message}");
-            }
-        }
 
         private long GetMinRecIdFromData(DataTable data)
         {

@@ -85,10 +85,8 @@ namespace DBCopyTool
             nudAxDbCmdTimeout = new NumericUpDown();
 
             lblExecution = new Label();
-            lblParallelFetch = new Label();
-            nudParallelFetch = new NumericUpDown();
-            lblParallelInsert = new Label();
-            nudParallelInsert = new NumericUpDown();
+            lblParallelWorkers = new Label();
+            nudParallelWorkers = new NumericUpDown();
 
             lblSystemExcludedTables = new Label();
             txtSystemExcludedTables = new TextBox();
@@ -96,9 +94,8 @@ namespace DBCopyTool
 
             // Action buttons
             btnPrepareTableList = new Button();
-            btnGetData = new Button();
-            btnInsertData = new Button();
-            btnInsertFailed = new Button();
+            btnProcessTables = new Button();
+            btnRetryFailed = new Button();
             btnRunAll = new Button();
             btnStop = new Button();
 
@@ -127,8 +124,7 @@ namespace DBCopyTool
             ((System.ComponentModel.ISupportInitialize)nudTier2ConnTimeout).BeginInit();
             ((System.ComponentModel.ISupportInitialize)nudTier2CmdTimeout).BeginInit();
             ((System.ComponentModel.ISupportInitialize)nudAxDbCmdTimeout).BeginInit();
-            ((System.ComponentModel.ISupportInitialize)nudParallelFetch).BeginInit();
-            ((System.ComponentModel.ISupportInitialize)nudParallelInsert).BeginInit();
+            ((System.ComponentModel.ISupportInitialize)nudParallelWorkers).BeginInit();
             ((System.ComponentModel.ISupportInitialize)dgvTables).BeginInit();
             grpLog.SuspendLayout();
             menuStrip.SuspendLayout();
@@ -230,9 +226,8 @@ namespace DBCopyTool
             tabTables.Controls.Add(grpCol3);
             tabTables.Controls.Add(grpCol4);
             tabTables.Controls.Add(btnPrepareTableList);
-            tabTables.Controls.Add(btnGetData);
-            tabTables.Controls.Add(btnInsertData);
-            tabTables.Controls.Add(btnInsertFailed);
+            tabTables.Controls.Add(btnProcessTables);
+            tabTables.Controls.Add(btnRetryFailed);
             tabTables.Controls.Add(btnRunAll);
             tabTables.Controls.Add(btnStop);
             tabTables.Controls.Add(lblStatus);
@@ -377,10 +372,8 @@ namespace DBCopyTool
             tabConnection.Controls.Add(lblAxDbCmdTimeout);
             tabConnection.Controls.Add(nudAxDbCmdTimeout);
             tabConnection.Controls.Add(lblExecution);
-            tabConnection.Controls.Add(lblParallelFetch);
-            tabConnection.Controls.Add(nudParallelFetch);
-            tabConnection.Controls.Add(lblParallelInsert);
-            tabConnection.Controls.Add(nudParallelInsert);
+            tabConnection.Controls.Add(lblParallelWorkers);
+            tabConnection.Controls.Add(nudParallelWorkers);
             tabConnection.Controls.Add(lblSystemExcludedTables);
             tabConnection.Controls.Add(txtSystemExcludedTables);
             tabConnection.Controls.Add(btnInitSystemExcludedTables);
@@ -503,27 +496,16 @@ namespace DBCopyTool
             lblExecution.Location = new Point(10, 165);
             lblExecution.Text = "Execution Settings";
 
-            lblParallelFetch.AutoSize = true;
-            lblParallelFetch.Location = new Point(10, 190);
-            lblParallelFetch.Text = "Parallel Fetch Connections:";
+            lblParallelWorkers.AutoSize = true;
+            lblParallelWorkers.Location = new Point(10, 190);
+            lblParallelWorkers.Text = "Parallel Workers:";
 
-            nudParallelFetch.Location = new Point(200, 188);
-            nudParallelFetch.Maximum = 50;
-            nudParallelFetch.Minimum = 1;
-            nudParallelFetch.Name = "nudParallelFetch";
-            nudParallelFetch.Size = new Size(80, 23);
-            nudParallelFetch.Value = 10;
-
-            lblParallelInsert.AutoSize = true;
-            lblParallelInsert.Location = new Point(300, 190);
-            lblParallelInsert.Text = "Parallel Insert Connections:";
-
-            nudParallelInsert.Location = new Point(490, 188);
-            nudParallelInsert.Maximum = 50;
-            nudParallelInsert.Minimum = 1;
-            nudParallelInsert.Name = "nudParallelInsert";
-            nudParallelInsert.Size = new Size(80, 23);
-            nudParallelInsert.Value = 10;
+            nudParallelWorkers.Location = new Point(150, 188);
+            nudParallelWorkers.Maximum = 50;
+            nudParallelWorkers.Minimum = 1;
+            nudParallelWorkers.Name = "nudParallelWorkers";
+            nudParallelWorkers.Size = new Size(80, 23);
+            nudParallelWorkers.Value = 10;
 
             // System Excluded Tables
             lblSystemExcludedTables.AutoSize = true;
@@ -551,31 +533,25 @@ namespace DBCopyTool
             btnPrepareTableList.Text = "Discover Tables";
             btnPrepareTableList.Click += BtnPrepareTableList_Click;
 
-            btnGetData.Location = new Point(152, 250);
-            btnGetData.Name = "btnGetData";
-            btnGetData.Size = new Size(100, 30);
-            btnGetData.Text = "Fetch Data";
-            btnGetData.Click += BtnGetData_Click;
+            btnProcessTables.Location = new Point(152, 250);
+            btnProcessTables.Name = "btnProcessTables";
+            btnProcessTables.Size = new Size(120, 30);
+            btnProcessTables.Text = "Process Tables";
+            btnProcessTables.Click += BtnProcessTables_Click;
 
-            btnInsertData.Location = new Point(262, 250);
-            btnInsertData.Name = "btnInsertData";
-            btnInsertData.Size = new Size(100, 30);
-            btnInsertData.Text = "Insert Data";
-            btnInsertData.Click += BtnInsertData_Click;
+            btnRetryFailed.Location = new Point(282, 250);
+            btnRetryFailed.Name = "btnRetryFailed";
+            btnRetryFailed.Size = new Size(100, 30);
+            btnRetryFailed.Text = "Retry Failed";
+            btnRetryFailed.Click += BtnRetryFailed_Click;
 
-            btnInsertFailed.Location = new Point(372, 250);
-            btnInsertFailed.Name = "btnInsertFailed";
-            btnInsertFailed.Size = new Size(100, 30);
-            btnInsertFailed.Text = "Retry Failed";
-            btnInsertFailed.Click += BtnInsertFailed_Click;
-
-            btnRunAll.Location = new Point(482, 250);
+            btnRunAll.Location = new Point(392, 250);
             btnRunAll.Name = "btnRunAll";
             btnRunAll.Size = new Size(100, 30);
             btnRunAll.Text = "Run All";
             btnRunAll.Click += BtnRunAll_Click;
 
-            btnStop.Location = new Point(592, 250);
+            btnStop.Location = new Point(502, 250);
             btnStop.Name = "btnStop";
             btnStop.Size = new Size(100, 30);
             btnStop.Text = "Stop";
@@ -669,8 +645,7 @@ namespace DBCopyTool
             ((System.ComponentModel.ISupportInitialize)nudTier2ConnTimeout).EndInit();
             ((System.ComponentModel.ISupportInitialize)nudTier2CmdTimeout).EndInit();
             ((System.ComponentModel.ISupportInitialize)nudAxDbCmdTimeout).EndInit();
-            ((System.ComponentModel.ISupportInitialize)nudParallelFetch).EndInit();
-            ((System.ComponentModel.ISupportInitialize)nudParallelInsert).EndInit();
+            ((System.ComponentModel.ISupportInitialize)nudParallelWorkers).EndInit();
             ((System.ComponentModel.ISupportInitialize)dgvTables).EndInit();
             grpLog.ResumeLayout(false);
             grpLog.PerformLayout();
@@ -749,10 +724,8 @@ namespace DBCopyTool
         private NumericUpDown nudAxDbCmdTimeout;
 
         private Label lblExecution;
-        private Label lblParallelFetch;
-        private NumericUpDown nudParallelFetch;
-        private Label lblParallelInsert;
-        private NumericUpDown nudParallelInsert;
+        private Label lblParallelWorkers;
+        private NumericUpDown nudParallelWorkers;
 
         private Label lblSystemExcludedTables;
         private TextBox txtSystemExcludedTables;
@@ -760,9 +733,8 @@ namespace DBCopyTool
 
         // Action Buttons
         private Button btnPrepareTableList;
-        private Button btnGetData;
-        private Button btnInsertData;
-        private Button btnInsertFailed;
+        private Button btnProcessTables;
+        private Button btnRetryFailed;
         private Button btnRunAll;
         private Button btnStop;
 

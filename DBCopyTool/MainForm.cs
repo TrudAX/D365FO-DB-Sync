@@ -207,8 +207,7 @@ namespace DBCopyTool
             txtAxDbPassword.Text = _currentConfig.AxDbConnection.Password;
             nudAxDbCmdTimeout.Value = _currentConfig.AxDbConnection.CommandTimeout;
 
-            nudParallelFetch.Value = _currentConfig.ParallelFetchConnections;
-            nudParallelInsert.Value = _currentConfig.ParallelInsertConnections;
+            nudParallelWorkers.Value = _currentConfig.ParallelWorkers;
 
             txtSystemExcludedTables.Text = _currentConfig.SystemExcludedTables;
 
@@ -242,8 +241,7 @@ namespace DBCopyTool
             _currentConfig.AxDbConnection.Password = txtAxDbPassword.Text;
             _currentConfig.AxDbConnection.CommandTimeout = (int)nudAxDbCmdTimeout.Value;
 
-            _currentConfig.ParallelFetchConnections = (int)nudParallelFetch.Value;
-            _currentConfig.ParallelInsertConnections = (int)nudParallelInsert.Value;
+            _currentConfig.ParallelWorkers = (int)nudParallelWorkers.Value;
 
             _currentConfig.SystemExcludedTables = txtSystemExcludedTables.Text;
 
@@ -284,14 +282,15 @@ namespace DBCopyTool
 
         private void UpdateButtonStates()
         {
-            bool hasTableList = _orchestrator != null && _orchestrator.GetTables().Count > 0;
-            bool hasFetchedData = _orchestrator != null && _orchestrator.GetTables().Any(t => t.Status == TableStatus.Fetched);
-            bool hasInsertErrors = _orchestrator != null && _orchestrator.GetTables().Any(t => t.Status == TableStatus.InsertError);
+            bool hasPendingTables = _orchestrator != null &&
+                _orchestrator.GetTables().Any(t => t.Status == TableStatus.Pending);
+            bool hasFailedTables = _orchestrator != null &&
+                _orchestrator.GetTables().Any(t => t.Status == TableStatus.FetchError ||
+                                                  t.Status == TableStatus.InsertError);
 
             btnPrepareTableList.Enabled = !_isExecuting;
-            btnGetData.Enabled = !_isExecuting && hasTableList;
-            btnInsertData.Enabled = !_isExecuting && hasFetchedData;
-            btnInsertFailed.Enabled = !_isExecuting && hasInsertErrors;
+            btnProcessTables.Enabled = !_isExecuting && hasPendingTables;
+            btnRetryFailed.Enabled = !_isExecuting && hasFailedTables;
             btnRunAll.Enabled = !_isExecuting;
             btnStop.Enabled = _isExecuting;
 
@@ -454,35 +453,24 @@ namespace DBCopyTool
             });
         }
 
-        private async void BtnGetData_Click(object sender, EventArgs e)
+        private async void BtnProcessTables_Click(object sender, EventArgs e)
         {
             await ExecuteOperationAsync(async () =>
             {
                 if (_orchestrator != null)
                 {
-                    await _orchestrator.GetDataAsync();
+                    await _orchestrator.ProcessTablesAsync();
                 }
             });
         }
 
-        private async void BtnInsertData_Click(object sender, EventArgs e)
+        private async void BtnRetryFailed_Click(object sender, EventArgs e)
         {
             await ExecuteOperationAsync(async () =>
             {
                 if (_orchestrator != null)
                 {
-                    await _orchestrator.InsertDataAsync();
-                }
-            });
-        }
-
-        private async void BtnInsertFailed_Click(object sender, EventArgs e)
-        {
-            await ExecuteOperationAsync(async () =>
-            {
-                if (_orchestrator != null)
-                {
-                    await _orchestrator.InsertFailedAsync();
+                    await _orchestrator.RetryFailedAsync();
                 }
             });
         }

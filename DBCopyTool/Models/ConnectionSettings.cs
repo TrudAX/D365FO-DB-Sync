@@ -41,6 +41,7 @@ namespace DBCopyTool.Models
             {
                 builder.ConnectTimeout = ConnectionTimeout;
                 builder.Encrypt = true;
+                builder.ApplicationIntent = Microsoft.Data.SqlClient.ApplicationIntent.ReadOnly;  // Read-only hint for Azure SQL
             }
 
             return builder.ConnectionString;

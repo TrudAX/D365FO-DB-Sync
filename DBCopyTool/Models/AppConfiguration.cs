@@ -31,8 +31,8 @@ namespace DBCopyTool.Models
         public int DefaultRecordCount { get; set; } = 10000;
         public string StrategyOverrides { get; set; } = "";
 
-        public int ParallelFetchConnections { get; set; } = 10;
-        public int ParallelInsertConnections { get; set; } = 10;
+        // Parallel workers for merged fetch+insert workflow
+        public int ParallelWorkers { get; set; } = 10;
 
         // Helper method to create a default configuration
         public static AppConfiguration CreateDefault()

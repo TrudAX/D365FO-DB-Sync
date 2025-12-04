@@ -30,10 +30,10 @@ Version format: `1.0.YYYY.DayOfYear` (auto-increments with each build using MSBu
 ### Three-Tier Service Architecture
 
 **CopyOrchestrator** (`Services/CopyOrchestrator.cs`)
-- Central coordinator managing the three-stage copy workflow
-- Handles parallel execution with configurable connection pooling
+- Central coordinator managing the merged fetch+insert workflow
+- Handles parallel execution with configurable worker threads
 - Manages table discovery, filtering, and strategy parsing
-- Orchestrates data flow between Tier2 and AxDB services
+- Orchestrates atomic table processing (fetch → insert → clear memory per table)
 
 **Tier2DataService** (`Services/Tier2DataService.cs`)
 - Handles all interactions with D365FO Azure SQL Database
@@ -46,11 +46,10 @@ Version format: `1.0.YYYY.DayOfYear` (auto-increments with each build using MSBu
 - Manages triggers, sequences, and bulk inserts via SqlBulkCopy
 - Uses transactions with rollback on errors
 
-### Data Flow (Three Stages)
+### Data Flow (Two Stages)
 
 1. **Discover Tables**: Discovers tables from Tier2, applies inclusion/exclusion patterns, validates schemas against AxDB, generates fetch SQL for each table
-2. **Fetch Data**: Fetches data from Tier2 in parallel using configurable connection pool (default: 10 connections)
-3. **Insert Data**: Inserts into AxDB in parallel with automatic cleanup, trigger management, and sequence updates
+2. **Process Tables**: Parallel workers process tables atomically (each worker: fetch → insert → clear memory → next table). Default: 10 parallel workers, configurable 1-50. Memory cleared immediately after successful insert, retained only for failed tables to enable retry.
 
 ### Copy Strategy System
 
@@ -82,9 +81,10 @@ Critical optimization in `Models/SqlDictionaryCache.cs`:
 - Configuration names must be alphanumeric with underscores/hyphens only
 
 **AppConfiguration** (`Models/AppConfiguration.cs`)
-- Contains all settings: connections, table patterns, exclusions, strategies, parallel execution settings
+- Contains all settings: connections, table patterns, exclusions, strategies, parallel worker count
 - Two separate exclusion lists: user-defined (`TablesToExclude`) and system-level (`SystemExcludedTables`)
 - Strategy overrides use pipe-delimited format parsed in `CopyOrchestrator`
+- `ParallelWorkers` setting controls concurrent table processing (default: 10)
 
 ## D365FO Specific Concepts
 
@@ -153,10 +153,12 @@ This ensures clean data replacement without orphaned records. The multi-step app
 - Allows developers to copy SQL for manual testing
 
 **Parallel Execution**
-- Configurable connection pools for fetch and insert operations
-- Uses `SemaphoreSlim` to limit concurrent connections
-- Default: 10 parallel fetch, 10 parallel insert
-- Range: Min 1, Max 50 connections
+- Configurable parallel workers for merged fetch+insert workflow
+- Uses `SemaphoreSlim` to limit concurrent table processing
+- Default: 10 parallel workers
+- Range: Min 1, Max 50 workers
+- Each worker processes one table atomically: fetch → insert → clear memory → next table
+- Memory-efficient: Only N tables in memory at once (where N = parallel workers)
 - Connection pooling enabled with `Max Pool Size=20` in connection string
 
 **Pattern Matching**
@@ -177,9 +179,9 @@ This ensures clean data replacement without orphaned records. The multi-step app
 - Password handling uses simple Base64 obfuscation (not encryption) via `EncryptionHelper`
 - All SQL operations are logged with timestamps `[HH:mm:ss]` to the MainForm log TextBox
 - Log separator between stages: "─────────────────────────────────────────────"
-- Connection strings differ for Azure SQL (with Encrypt=True) vs local SQL Server
-- DataTable caching in `TableInfo.CachedData` enables retry without re-fetching
-- Status enum progression: Pending → Fetching → Fetched → Inserting → Inserted (or FetchError/InsertError)
+- Connection strings differ for Azure SQL (with Encrypt=True, ApplicationIntent=ReadOnly) vs local SQL Server
+- DataTable caching in `TableInfo.CachedData` cleared immediately after successful insert, retained only for failed tables
+- Status enum progression: Pending → Fetching → Inserting → Inserted (or FetchError/InsertError)
 - Configuration files stored in `Config/` folder relative to application startup path
 - Last used configuration tracked in `Config/.lastconfig` file
 - Config names must be alphanumeric with underscores/hyphens only (max 100 characters)
@@ -190,8 +192,8 @@ This ensures clean data replacement without orphaned records. The multi-step app
 - SqlBulkCopy settings: table lock enabled, batch size 10,000 rows
 - Connection timeout only used for Tier2 (default: 3 seconds)
 - Command timeout: Tier2 default 600 seconds, AxDB default 0 (unlimited)
-- Memory usage: 2-4 GB expected for typical workload (all fetched data held in memory)
-- UI updates: Table list refreshes every 500ms during execution, status line updates per table completion
+- Memory usage: Significantly reduced with merged workflow (only N tables in memory where N = parallel workers, vs all tables in old design)
+- UI updates: Table list refreshes every 3 seconds during execution, status line updates per table completion
 
 ## Common Modification Patterns
 
@@ -209,8 +211,9 @@ This ensures clean data replacement without orphaned records. The multi-step app
 - Field matching is case-insensitive and uses exact match (no wildcards)
 
 **Changing parallel execution:**
-- Adjust `ParallelFetchConnections` and `ParallelInsertConnections` in UI
-- SemaphoreSlim controls throttling in `GetDataAsync()` and `InsertDataInternalAsync()`
+- Adjust `ParallelWorkers` setting in UI (Connection tab)
+- SemaphoreSlim controls throttling in `ProcessTablesAsync()` and `ProcessSingleTableAsync()`
+- Each worker processes one table atomically from start to finish
 - Connection pool must accommodate parallel workers via connection string setting
 
 **UI-specific modifications:**
