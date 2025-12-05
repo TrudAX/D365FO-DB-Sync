@@ -15,6 +15,7 @@ namespace DBCopyTool.Models
         public int? DaysCount { get; set; }      // For ModifiedDate strategy
         public string WhereClause { get; set; } = string.Empty;  // Custom WHERE condition (without WHERE keyword)
         public bool UseTruncate { get; set; }    // -truncate flag
+        public bool NoCompareFlag { get; set; }  // -nocompare flag to disable delta comparison
 
         // Tier2 Info
         public long Tier2RowCount { get; set; }
@@ -34,7 +35,15 @@ namespace DBCopyTool.Models
         public decimal FetchTimeSeconds { get; set; }
         public decimal DeleteTimeSeconds { get; set; }
         public decimal InsertTimeSeconds { get; set; }
+        public decimal CompareTimeSeconds { get; set; }  // Time for AxDB version query + comparison
         public string Error { get; set; } = string.Empty;
+
+        // Delta Comparison Results
+        public bool ComparisonUsed { get; set; }         // Whether comparison was actually used
+        public int UnchangedCount { get; set; }          // Same RecId + RECVERSION
+        public int ModifiedCount { get; set; }           // Same RecId, different RECVERSION
+        public int NewInTier2Count { get; set; }         // In Tier2, not in AxDB
+        public int DeletedFromAxDbCount { get; set; }    // In AxDB, not in Tier2 fetched set
 
         // Cached Data (not persisted)
         public DataTable? CachedData { get; set; }
@@ -71,16 +80,24 @@ namespace DBCopyTool.Models
                 if (UseTruncate)
                     parts.Add("TRUNC");
 
+                if (NoCompareFlag)
+                    parts.Add("NOCMP");
+
                 return string.Join(" ", parts);
             }
         }
 
         public string Tier2SizeGBDisplay => Tier2SizeGB.ToString("F2");
-        public string FetchTimeDisplay => FetchTimeSeconds > 0 ? FetchTimeSeconds.ToString("F2") : "";
-        public string DeleteTimeDisplay => DeleteTimeSeconds > 0 ? DeleteTimeSeconds.ToString("F2") : "";
-        public string InsertTimeDisplay => InsertTimeSeconds > 0 ? InsertTimeSeconds.ToString("F2") : "";
+        public string FetchTimeDisplay => FetchTimeSeconds.ToString("F2");
+        public string DeleteTimeDisplay => DeleteTimeSeconds.ToString("F2");
+        public string InsertTimeDisplay => InsertTimeSeconds.ToString("F2");
+        public string CompareTimeDisplay => CompareTimeSeconds.ToString("F2");
         public string Tier2RowCountDisplay => Tier2RowCount.ToString("N0");
         public string EstimatedSizeMBDisplay => EstimatedSizeMB > 0 ? EstimatedSizeMB.ToString("F2") : "";
+        public string UnchangedDisplay => ComparisonUsed ? UnchangedCount.ToString("N0") : "";
+        public string ModifiedDisplay => ComparisonUsed ? ModifiedCount.ToString("N0") : "";
+        public string NewInTier2Display => ComparisonUsed ? NewInTier2Count.ToString("N0") : "";
+        public string DeletedFromAxDbDisplay => ComparisonUsed ? DeletedFromAxDbCount.ToString("N0") : "";
     }
 
     public enum TableStatus

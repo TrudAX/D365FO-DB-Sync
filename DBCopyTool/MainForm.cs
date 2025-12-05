@@ -179,6 +179,56 @@ namespace DBCopyTool
 
             dgvTables.Columns.Add(new DataGridViewTextBoxColumn
             {
+                DataPropertyName = "CompareTimeDisplay",
+                HeaderText = "Compare (s)",
+                Name = "CompareTime",
+                Width = 80,
+                DefaultCellStyle = new DataGridViewCellStyle { Alignment = DataGridViewContentAlignment.MiddleRight },
+                SortMode = DataGridViewColumnSortMode.Automatic
+            });
+
+            dgvTables.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                DataPropertyName = "UnchangedDisplay",
+                HeaderText = "Unchanged",
+                Name = "Unchanged",
+                Width = 80,
+                DefaultCellStyle = new DataGridViewCellStyle { Alignment = DataGridViewContentAlignment.MiddleRight },
+                SortMode = DataGridViewColumnSortMode.Automatic
+            });
+
+            dgvTables.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                DataPropertyName = "ModifiedDisplay",
+                HeaderText = "Modified",
+                Name = "Modified",
+                Width = 70,
+                DefaultCellStyle = new DataGridViewCellStyle { Alignment = DataGridViewContentAlignment.MiddleRight },
+                SortMode = DataGridViewColumnSortMode.Automatic
+            });
+
+            dgvTables.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                DataPropertyName = "NewInTier2Display",
+                HeaderText = "New",
+                Name = "New",
+                Width = 70,
+                DefaultCellStyle = new DataGridViewCellStyle { Alignment = DataGridViewContentAlignment.MiddleRight },
+                SortMode = DataGridViewColumnSortMode.Automatic
+            });
+
+            dgvTables.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                DataPropertyName = "DeletedFromAxDbDisplay",
+                HeaderText = "Deleted",
+                Name = "Deleted",
+                Width = 70,
+                DefaultCellStyle = new DataGridViewCellStyle { Alignment = DataGridViewContentAlignment.MiddleRight },
+                SortMode = DataGridViewColumnSortMode.Automatic
+            });
+
+            dgvTables.Columns.Add(new DataGridViewTextBoxColumn
+            {
                 DataPropertyName = "Error",
                 HeaderText = "Error",
                 Name = "Error",
@@ -595,14 +645,20 @@ namespace DBCopyTool
                                 "TableName" => table.TableName,
                                 "TableId" => table.TableId.ToString(),
                                 "StrategyDisplay" => table.StrategyDisplay,
-                                "RecordsToCopy" => table.RecordsToCopy.ToString("N0"),
-                                "Tier2RowCountDisplay" => table.Tier2RowCountDisplay,
-                                "RecordsFetched" => table.RecordsFetched.ToString("N0"),
                                 "EstimatedSizeMBDisplay" => table.EstimatedSizeMBDisplay,
+                                "Tier2RowCountDisplay" => table.Tier2RowCountDisplay,
+                                "Tier2SizeGBDisplay" => table.Tier2SizeGBDisplay,
+                                "Status" => table.Status.ToString(),
+                                "RecordsFetched" => table.RecordsFetched.ToString("N0"),
+                                "MinRecId" => table.MinRecId > 0 ? table.MinRecId.ToString("N0") : "",
                                 "FetchTimeDisplay" => table.FetchTimeDisplay,
                                 "DeleteTimeDisplay" => table.DeleteTimeDisplay,
                                 "InsertTimeDisplay" => table.InsertTimeDisplay,
-                                "Status" => table.Status.ToString(),
+                                "CompareTimeDisplay" => table.CompareTimeDisplay,
+                                "UnchangedDisplay" => table.UnchangedDisplay,
+                                "ModifiedDisplay" => table.ModifiedDisplay,
+                                "NewInTier2Display" => table.NewInTier2Display,
+                                "DeletedFromAxDbDisplay" => table.DeletedFromAxDbDisplay,
                                 "Error" => table.Error.Replace("\r\n", " ").Replace("\n", " ").Replace("\r", " ").Replace("\t", " "),
                                 _ => ""
                             };
@@ -1085,7 +1141,11 @@ namespace DBCopyTool
                 "AIFCHANGETRACKINGDELETEDOBJECT",
                 "LICENSINGUSEREFFECTIVEROLES",
                 "TIMEZONEINFO",
-                "FORMRUN*"
+                "FORMRUN*",
+                "BUSINESSEVENTSTABLE",
+                "FORMCONTROL*",
+                "VENDACCOUNTNUMOBJECTREFERENCES",
+                "AxKPI*"
             });
 
             txtSystemExcludedTables.Text = defaultSystemExclusions;
@@ -1262,6 +1322,31 @@ namespace DBCopyTool
                     sortedItems = direction == ListSortDirection.Ascending
                         ? items.OrderBy(x => x.InsertTimeSeconds)
                         : items.OrderByDescending(x => x.InsertTimeSeconds);
+                    break;
+                case "CompareTimeDisplay":
+                    sortedItems = direction == ListSortDirection.Ascending
+                        ? items.OrderBy(x => x.CompareTimeSeconds)
+                        : items.OrderByDescending(x => x.CompareTimeSeconds);
+                    break;
+                case "UnchangedDisplay":
+                    sortedItems = direction == ListSortDirection.Ascending
+                        ? items.OrderBy(x => x.UnchangedCount)
+                        : items.OrderByDescending(x => x.UnchangedCount);
+                    break;
+                case "ModifiedDisplay":
+                    sortedItems = direction == ListSortDirection.Ascending
+                        ? items.OrderBy(x => x.ModifiedCount)
+                        : items.OrderByDescending(x => x.ModifiedCount);
+                    break;
+                case "NewInTier2Display":
+                    sortedItems = direction == ListSortDirection.Ascending
+                        ? items.OrderBy(x => x.NewInTier2Count)
+                        : items.OrderByDescending(x => x.NewInTier2Count);
+                    break;
+                case "DeletedFromAxDbDisplay":
+                    sortedItems = direction == ListSortDirection.Ascending
+                        ? items.OrderBy(x => x.DeletedFromAxDbCount)
+                        : items.OrderByDescending(x => x.DeletedFromAxDbCount);
                     break;
                 case "Error":
                     sortedItems = direction == ListSortDirection.Ascending

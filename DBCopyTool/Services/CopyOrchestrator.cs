@@ -183,6 +183,7 @@ namespace DBCopyTool.Services
                         DaysCount = strategy.DaysCount,
                         WhereClause = strategy.WhereClause,
                         UseTruncate = strategy.UseTruncate,
+                        NoCompareFlag = strategy.NoCompareFlag,
                         Tier2RowCount = rowCount,
                         Tier2SizeGB = sizeGB,
                         BytesPerRow = bytesPerRow,
@@ -442,6 +443,7 @@ namespace DBCopyTool.Services
             table.DaysCount = strategy.DaysCount;
             table.WhereClause = strategy.WhereClause;
             table.UseTruncate = strategy.UseTruncate;
+            table.NoCompareFlag = strategy.NoCompareFlag;
             table.RecordsToCopy = recordsToCopy;
             table.EstimatedSizeMB = estimatedSizeMB;
             table.FetchSql = fetchSql;
@@ -579,8 +581,16 @@ namespace DBCopyTool.Services
                 table.Status = TableStatus.Inserted;
                 table.Error = string.Empty;
 
-                var totalTime = table.FetchTimeSeconds + table.DeleteTimeSeconds + table.InsertTimeSeconds;
-                _logger($"Completed {table.TableName}: Total time {totalTime:F2}s (Fetch: {table.FetchTimeSeconds:F2}s, Delete: {table.DeleteTimeSeconds:F2}s, Insert: {table.InsertTimeSeconds:F2}s)");
+                var totalTime = table.FetchTimeSeconds + table.CompareTimeSeconds + table.DeleteTimeSeconds + table.InsertTimeSeconds;
+
+                if (table.ComparisonUsed)
+                {
+                    _logger($"Completed {table.TableName}: Total time {totalTime:F2}s (Fetch: {table.FetchTimeSeconds:F2}s, Compare: {table.CompareTimeSeconds:F2}s, Delete: {table.DeleteTimeSeconds:F2}s, Insert: {table.InsertTimeSeconds:F2}s)");
+                }
+                else
+                {
+                    _logger($"Completed {table.TableName}: Total time {totalTime:F2}s (Fetch: {table.FetchTimeSeconds:F2}s, Delete: {table.DeleteTimeSeconds:F2}s, Insert: {table.InsertTimeSeconds:F2}s)");
+                }
             }
             catch (OperationCanceledException)
             {
@@ -690,14 +700,30 @@ namespace DBCopyTool.Services
 
         private StrategyOverride ParseStrategyLine(string line)
         {
-            // Check for -truncate flag at the end
+            // Check for -nocompare and -truncate flags at the end
+            bool noCompare = false;
             bool useTruncate = false;
             string workingLine = line;
 
-            if (line.EndsWith(" -truncate", StringComparison.OrdinalIgnoreCase))
+            // Check for -nocompare flag
+            if (workingLine.EndsWith(" -nocompare", StringComparison.OrdinalIgnoreCase))
+            {
+                noCompare = true;
+                workingLine = workingLine.Substring(0, workingLine.Length - 11).Trim();
+            }
+
+            // Check for -truncate flag
+            if (workingLine.EndsWith(" -truncate", StringComparison.OrdinalIgnoreCase))
             {
                 useTruncate = true;
-                workingLine = line.Substring(0, line.Length - 10).Trim();
+                workingLine = workingLine.Substring(0, workingLine.Length - 10).Trim();
+            }
+
+            // Check again for -nocompare (in case order is -truncate -nocompare)
+            if (workingLine.EndsWith(" -nocompare", StringComparison.OrdinalIgnoreCase))
+            {
+                noCompare = true;
+                workingLine = workingLine.Substring(0, workingLine.Length - 11).Trim();
             }
 
             // Split by pipe
@@ -780,7 +806,8 @@ namespace DBCopyTool.Services
                 RecIdCount = recIdCount,
                 DaysCount = daysCount,
                 WhereClause = whereClause,
-                UseTruncate = useTruncate
+                UseTruncate = useTruncate,
+                NoCompareFlag = noCompare
             };
         }
 
@@ -945,5 +972,6 @@ namespace DBCopyTool.Services
         public int? DaysCount { get; set; }
         public string WhereClause { get; set; } = string.Empty;
         public bool UseTruncate { get; set; }
+        public bool NoCompareFlag { get; set; }
     }
 }

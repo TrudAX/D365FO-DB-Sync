@@ -7,6 +7,9 @@ namespace DBCopyTool.Services
 {
     public class AxDbDataService
     {
+        private const int DELETE_BATCH_SIZE = 5000;
+        private const int SEQUENCE_GAP = 10000;
+
         private readonly ConnectionSettings _connectionSettings;
         private readonly string _connectionString;
         private readonly Action<string> _logger;
@@ -95,69 +98,174 @@ namespace DBCopyTool.Services
             using var connection = new SqlConnection(_connectionString);
             await connection.OpenAsync(cancellationToken);
 
-            using var transaction = connection.BeginTransaction();
-
             try
             {
                 _logger($"[AxDB] Starting insert for table {tableInfo.TableName} ({tableInfo.CachedData.Rows.Count} rows)");
 
+                // Determine if we should use delta comparison
+                bool shouldCompare = ShouldUseComparison(tableInfo);
+
+                ComparisonResult? comparison = null;
+                DataTable dataToInsert = tableInfo.CachedData;
+                HashSet<long> recIdsToDelete = new HashSet<long>();
+
+                if (shouldCompare)
+                {
+                    var compareStopwatch = Stopwatch.StartNew();
+
+                    // Get comparison context (intersection of Tier2 and AxDB columns)
+                    var axDbColumns = await GetAxDbComparisonColumnsAsync(
+                        tableInfo.TableName, connection, null, cancellationToken);
+                    var context = BuildComparisonContext(tableInfo.CachedData, axDbColumns);
+
+                    if (!context.CanCompare)
+                    {
+                        _logger($"[AxDB] {tableInfo.TableName}: RECVERSION not in both databases, using full sync");
+                        shouldCompare = false;
+                    }
+                    else
+                    {
+                        // Log comparison mode
+                        string mode = context.IsFallbackMode
+                            ? "RECVERSION only (RECVERSION=1 excluded)"
+                            : $"RECVERSION + {(context.HasCreatedDateTime ? "CREATEDDATETIME " : "")}{(context.HasModifiedDateTime ? "MODIFIEDDATETIME" : "")}".Trim();
+                        _logger($"[AxDB] {tableInfo.TableName}: Comparison mode: {mode}");
+
+                        // Fetch version map from AxDB
+                        long minRecId = GetMinRecId(tableInfo.CachedData);
+                        var axDbVersions = await GetAxDbVersionMapAsync(
+                            tableInfo.TableName, minRecId, context, connection, null, cancellationToken);
+
+                        // Compare records
+                        comparison = CompareRecords(tableInfo.CachedData, axDbVersions, context);
+
+                        compareStopwatch.Stop();
+                        tableInfo.CompareTimeSeconds = (decimal)compareStopwatch.Elapsed.TotalSeconds;
+                        tableInfo.ComparisonUsed = true;
+                        tableInfo.UnchangedCount = comparison.UnchangedRecIds.Count;
+                        tableInfo.ModifiedCount = comparison.ModifiedRecIds.Count;
+                        tableInfo.NewInTier2Count = comparison.NewRecIds.Count;
+                        tableInfo.DeletedFromAxDbCount = comparison.DeletedRecIds.Count;
+
+                        _logger($"[AxDB] Compared {tableInfo.TableName}: {comparison.UnchangedRecIds.Count:N0} unchanged, " +
+                               $"{comparison.ModifiedRecIds.Count:N0} modified, {comparison.NewRecIds.Count:N0} new, " +
+                               $"{comparison.DeletedRecIds.Count:N0} deleted in {tableInfo.CompareTimeSeconds:F2}s");
+
+                        // Check if anything needs to be done
+                        if (comparison.ModifiedRecIds.Count == 0 &&
+                            comparison.NewRecIds.Count == 0 &&
+                            comparison.DeletedRecIds.Count == 0)
+                        {
+                            _logger($"[AxDB] {tableInfo.TableName}: All records unchanged, skipping delete/insert");
+                            tableInfo.DeleteTimeSeconds = 0;
+                            tableInfo.InsertTimeSeconds = 0;
+
+                            // Still update sequence with gap
+                            await UpdateSequenceAsync(tableInfo, connection, null, cancellationToken);
+
+                            return 0;
+                        }
+
+                        // Prepare for delete and insert
+                        recIdsToDelete = new HashSet<long>(comparison.ModifiedRecIds);
+                        recIdsToDelete.UnionWith(comparison.DeletedRecIds);
+
+                        var recIdsToInsert = new HashSet<long>(comparison.ModifiedRecIds);
+                        recIdsToInsert.UnionWith(comparison.NewRecIds);
+
+                        dataToInsert = FilterDataTableByRecIds(tableInfo.CachedData, recIdsToInsert);
+
+                        _logger($"[AxDB] {tableInfo.TableName}: Will delete {recIdsToDelete.Count:N0}, insert {dataToInsert.Rows.Count:N0}");
+                    }
+                }
+
+                // Additional check: If copying entire table, delete records below MinRecId
+                // This handles the case where AxDB has old records with RecIds below Tier2 range
+                bool shouldDeleteBelowMinRecId = false;
+                if (shouldCompare && comparison != null &&
+                    tableInfo.Tier2RowCount > 0 &&
+                    tableInfo.RecordsToCopy > 0 &&
+                    tableInfo.Tier2RowCount <= tableInfo.RecordsToCopy)
+                {
+                    shouldDeleteBelowMinRecId = true;
+                }
+
                 // Step 1: Disable triggers (BEFORE any DELETE or INSERT operations)
                 string disableTriggersSql = $"ALTER TABLE [{tableInfo.TableName}] DISABLE TRIGGER ALL";
                 _logger($"[AxDB SQL] {disableTriggersSql}");
-                await ExecuteNonQueryAsync(disableTriggersSql, connection, transaction);
+                await ExecuteNonQueryAsync(disableTriggersSql, connection, null);
 
-                // Step 2: Delete existing records based on strategy
+                // Step 2: Delete existing records
                 var deleteStopwatch = Stopwatch.StartNew();
-                await DeleteExistingRecordsAsync(tableInfo, connection, transaction, cancellationToken);
+
+                if (shouldCompare && comparison != null)
+                {
+                    // If copying entire table, first delete records below MinRecId
+                    if (shouldDeleteBelowMinRecId)
+                    {
+                        long minRecId = GetMinRecId(tableInfo.CachedData);
+                        await DeleteBelowMinRecIdAsync(tableInfo.TableName, minRecId, connection, null, cancellationToken);
+                    }
+
+                    // Delta delete: only modified + deleted RecIds
+                    await DeleteByRecIdListAsync(tableInfo.TableName, recIdsToDelete, connection, null, cancellationToken);
+                }
+                else
+                {
+                    // Full delete: current behavior based on strategy
+                    await DeleteExistingRecordsAsync(tableInfo, connection, null, cancellationToken);
+                }
+
                 deleteStopwatch.Stop();
                 tableInfo.DeleteTimeSeconds = (decimal)deleteStopwatch.Elapsed.TotalSeconds;
 
                 // Step 3: Bulk insert data
-                _logger($"[AxDB] Bulk inserting {tableInfo.CachedData.Rows.Count} rows into {tableInfo.TableName}");
+                _logger($"[AxDB] Bulk inserting {dataToInsert.Rows.Count} rows into {tableInfo.TableName}");
                 var insertStopwatch = Stopwatch.StartNew();
-                using (var bulkCopy = new SqlBulkCopy(connection, SqlBulkCopyOptions.TableLock, transaction))
+
+                if (dataToInsert.Rows.Count > 0)
                 {
-                    bulkCopy.DestinationTableName = tableInfo.TableName;
-                    bulkCopy.BatchSize = 10000;
-                    bulkCopy.BulkCopyTimeout = _connectionSettings.CommandTimeout;
-
-                    // Map columns
-                    foreach (DataColumn column in tableInfo.CachedData.Columns)
+                    using (var bulkCopy = new SqlBulkCopy(connection))
                     {
-                        bulkCopy.ColumnMappings.Add(column.ColumnName, column.ColumnName);
-                    }
+                        bulkCopy.DestinationTableName = tableInfo.TableName;
+                        bulkCopy.BatchSize = 10000;
+                        bulkCopy.BulkCopyTimeout = _connectionSettings.CommandTimeout;
 
-                    await bulkCopy.WriteToServerAsync(tableInfo.CachedData, cancellationToken);
+                        // Map columns
+                        foreach (DataColumn column in dataToInsert.Columns)
+                        {
+                            bulkCopy.ColumnMappings.Add(column.ColumnName, column.ColumnName);
+                        }
+
+                        await bulkCopy.WriteToServerAsync(dataToInsert, cancellationToken);
+                    }
                 }
+
                 insertStopwatch.Stop();
                 tableInfo.InsertTimeSeconds = (decimal)insertStopwatch.Elapsed.TotalSeconds;
 
                 // Step 4: Enable triggers (always, even if errors occur)
                 string enableTriggersSql = $"ALTER TABLE [{tableInfo.TableName}] ENABLE TRIGGER ALL";
                 _logger($"[AxDB SQL] {enableTriggersSql}");
-                await ExecuteNonQueryAsync(enableTriggersSql, connection, transaction);
+                await ExecuteNonQueryAsync(enableTriggersSql, connection, null);
 
                 // Step 5: Update sequence
-                await UpdateSequenceAsync(tableInfo, connection, transaction, cancellationToken);
+                await UpdateSequenceAsync(tableInfo, connection, null, cancellationToken);
 
-                // Commit transaction
-                await transaction.CommitAsync(cancellationToken);
-
-                return tableInfo.CachedData.Rows.Count;
+                return dataToInsert.Rows.Count;
             }
             catch
             {
                 // Always try to re-enable triggers on error
                 try
                 {
-                    await ExecuteNonQueryAsync($"ALTER TABLE [{tableInfo.TableName}] ENABLE TRIGGER ALL", connection, transaction);
+                    await ExecuteNonQueryAsync($"ALTER TABLE [{tableInfo.TableName}] ENABLE TRIGGER ALL", connection, null);
                 }
                 catch
                 {
                     // Ignore errors when re-enabling triggers
                 }
 
-                await transaction.RollbackAsync(cancellationToken);
                 throw;
             }
         }
@@ -165,7 +273,7 @@ namespace DBCopyTool.Services
         /// <summary>
         /// Deletes existing records based on the copy strategy and cleanup rules
         /// </summary>
-        private async Task DeleteExistingRecordsAsync(TableInfo tableInfo, SqlConnection connection, SqlTransaction transaction, CancellationToken cancellationToken)
+        private async Task DeleteExistingRecordsAsync(TableInfo tableInfo, SqlConnection connection, SqlTransaction? transaction, CancellationToken cancellationToken)
         {
             if (tableInfo.CachedData == null || tableInfo.CachedData.Rows.Count == 0)
                 return;
@@ -234,7 +342,7 @@ namespace DBCopyTool.Services
             }
         }
 
-        private async Task DeleteByRecIdAsync(TableInfo tableInfo, SqlConnection connection, SqlTransaction transaction, CancellationToken cancellationToken)
+        private async Task DeleteByRecIdAsync(TableInfo tableInfo, SqlConnection connection, SqlTransaction? transaction, CancellationToken cancellationToken)
         {
             long minRecId = GetMinRecId(tableInfo.CachedData!);
             string deleteQuery = $"DELETE FROM [{tableInfo.TableName}] WHERE RecId >= @MinRecId";
@@ -246,7 +354,7 @@ namespace DBCopyTool.Services
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
-        private async Task DeleteByModifiedDateAsync(TableInfo tableInfo, SqlConnection connection, SqlTransaction transaction, CancellationToken cancellationToken)
+        private async Task DeleteByModifiedDateAsync(TableInfo tableInfo, SqlConnection connection, SqlTransaction? transaction, CancellationToken cancellationToken)
         {
             DateTime minModifiedDate = GetMinModifiedDate(tableInfo.CachedData!);
             string deleteDateQuery = $"DELETE FROM [{tableInfo.TableName}] WHERE [MODIFIEDDATETIME] >= @MinModifiedDate";
@@ -276,7 +384,7 @@ namespace DBCopyTool.Services
             }
         }
 
-        private async Task DeleteByWhereClauseAsync(TableInfo tableInfo, SqlConnection connection, SqlTransaction transaction, CancellationToken cancellationToken)
+        private async Task DeleteByWhereClauseAsync(TableInfo tableInfo, SqlConnection connection, SqlTransaction? transaction, CancellationToken cancellationToken)
         {
             if (string.IsNullOrEmpty(tableInfo.WhereClause))
                 return;
@@ -292,14 +400,10 @@ namespace DBCopyTool.Services
         /// <summary>
         /// Updates the sequence for a table if needed
         /// </summary>
-        private async Task UpdateSequenceAsync(TableInfo tableInfo, SqlConnection connection, SqlTransaction transaction, CancellationToken cancellationToken)
+        private async Task UpdateSequenceAsync(TableInfo tableInfo, SqlConnection connection, SqlTransaction? transaction, CancellationToken cancellationToken)
         {
-            if (tableInfo.CachedData == null || tableInfo.CachedData.Rows.Count == 0)
-                return;
-
             // Get max RecId from the table
             string maxRecIdQuery = $"SELECT MAX(RecId) FROM [{tableInfo.TableName}]";
-            _logger($"[AxDB SQL] {maxRecIdQuery}");
             using var command1 = new SqlCommand(maxRecIdQuery, connection, transaction);
             command1.CommandTimeout = _connectionSettings.CommandTimeout;
             var maxRecIdResult = await command1.ExecuteScalarAsync(cancellationToken);
@@ -311,8 +415,7 @@ namespace DBCopyTool.Services
 
             // Get current sequence value
             string sequenceName = $"SEQ_{tableInfo.TableId}";
-            string currentSeqQuery = $"SELECT CAST(current_value AS BIGINT) FROM sys.sequences WHERE name = @SequenceName";
-            _logger($"[AxDB SQL] Getting sequence value for {sequenceName}");
+            string currentSeqQuery = "SELECT CAST(current_value AS BIGINT) FROM sys.sequences WHERE name = @SequenceName";
 
             using var command2 = new SqlCommand(currentSeqQuery, connection, transaction);
             command2.Parameters.AddWithValue("@SequenceName", sequenceName);
@@ -324,21 +427,21 @@ namespace DBCopyTool.Services
 
             long currentSeq = Convert.ToInt64(currentSeqResult);
 
-            // Update sequence if max RecId is higher
-            if (maxRecId > currentSeq)
-            {
-                string updateSeqQuery = $"ALTER SEQUENCE [{sequenceName}] RESTART WITH {maxRecId}";
-                _logger($"[AxDB SQL] {updateSeqQuery}");
-                using var command3 = new SqlCommand(updateSeqQuery, connection, transaction);
-                command3.CommandTimeout = _connectionSettings.CommandTimeout;
-                await command3.ExecuteNonQueryAsync(cancellationToken);
-            }
+            // Calculate new sequence value with gap
+            long newSeq = Math.Max(maxRecId, currentSeq) + SEQUENCE_GAP;
+
+            string updateSeqQuery = $"ALTER SEQUENCE [{sequenceName}] RESTART WITH {newSeq}";
+            _logger($"[AxDB SQL] {updateSeqQuery}");
+
+            using var command3 = new SqlCommand(updateSeqQuery, connection, transaction);
+            command3.CommandTimeout = _connectionSettings.CommandTimeout;
+            await command3.ExecuteNonQueryAsync(cancellationToken);
         }
 
         /// <summary>
         /// Executes a non-query command
         /// </summary>
-        private async Task ExecuteNonQueryAsync(string query, SqlConnection connection, SqlTransaction transaction)
+        private async Task ExecuteNonQueryAsync(string query, SqlConnection connection, SqlTransaction? transaction)
         {
             using var command = new SqlCommand(query, connection, transaction);
             command.CommandTimeout = _connectionSettings.CommandTimeout;
@@ -394,6 +497,346 @@ namespace DBCopyTool.Services
             _logger($"[AxDB] Loaded SQLDICTIONARY cache: {cache.GetStats()}");
 
             return cache;
+        }
+
+        /// <summary>
+        /// Check if DataTable has a column (case-insensitive)
+        /// </summary>
+        private bool HasColumn(DataTable table, string columnName)
+        {
+            foreach (DataColumn col in table.Columns)
+            {
+                if (col.ColumnName.Equals(columnName, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Get column name with correct case from DataTable
+        /// </summary>
+        private string? GetColumnName(DataTable table, string columnName)
+        {
+            foreach (DataColumn col in table.Columns)
+            {
+                if (col.ColumnName.Equals(columnName, StringComparison.OrdinalIgnoreCase))
+                    return col.ColumnName;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Query AxDB to determine which comparison columns exist
+        /// </summary>
+        private async Task<HashSet<string>> GetAxDbComparisonColumnsAsync(
+            string tableName,
+            SqlConnection connection,
+            SqlTransaction? transaction,
+            CancellationToken cancellationToken)
+        {
+            var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            string query = @"
+                SELECT COLUMN_NAME
+                FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_NAME = @TableName
+                  AND UPPER(COLUMN_NAME) IN ('RECVERSION', 'CREATEDDATETIME', 'MODIFIEDDATETIME')";
+
+            using var command = new SqlCommand(query, connection, transaction);
+            command.Parameters.AddWithValue("@TableName", tableName);
+            command.CommandTimeout = _connectionSettings.CommandTimeout;
+
+            using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                columns.Add(reader.GetString(0));
+            }
+
+            return columns;
+        }
+
+        /// <summary>
+        /// Build comparison context from Tier2 data and AxDB columns
+        /// </summary>
+        private ComparisonContext BuildComparisonContext(DataTable tier2Data, HashSet<string> axDbColumns)
+        {
+            var context = new ComparisonContext();
+
+            // Check intersection for each comparison field
+            context.HasRecVersion = HasColumn(tier2Data, "RECVERSION") &&
+                                    axDbColumns.Contains("RECVERSION");
+
+            context.HasCreatedDateTime = HasColumn(tier2Data, "CREATEDDATETIME") &&
+                                          axDbColumns.Contains("CREATEDDATETIME");
+
+            context.HasModifiedDateTime = HasColumn(tier2Data, "MODIFIEDDATETIME") &&
+                                           axDbColumns.Contains("MODIFIEDDATETIME");
+
+            return context;
+        }
+
+        /// <summary>
+        /// Determines if delta comparison should be used for this table
+        /// </summary>
+        private bool ShouldUseComparison(TableInfo tableInfo)
+        {
+            // Skip if explicitly disabled
+            if (tableInfo.NoCompareFlag)
+                return false;
+
+            // Skip if truncating (no point comparing)
+            if (tableInfo.UseTruncate)
+                return false;
+
+            // Skip for ALL strategy (always truncates)
+            if (tableInfo.StrategyType == CopyStrategyType.All)
+                return false;
+
+            // Skip if no data
+            if (tableInfo.CachedData == null || tableInfo.CachedData.Rows.Count == 0)
+                return false;
+
+            // Skip if RECVERSION column not present
+            if (!HasColumn(tableInfo.CachedData, "RECVERSION"))
+            {
+                _logger($"[AxDB] {tableInfo.TableName}: RECVERSION not found, using full sync");
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Fetch RecId and comparison fields from AxDB
+        /// </summary>
+        private async Task<Dictionary<long, AxDbRecordVersion>> GetAxDbVersionMapAsync(
+            string tableName,
+            long minRecId,
+            ComparisonContext context,
+            SqlConnection connection,
+            SqlTransaction? transaction,
+            CancellationToken cancellationToken)
+        {
+            var result = new Dictionary<long, AxDbRecordVersion>();
+
+            // Build column list based on context
+            var columns = new List<string> { "RecId", "RECVERSION" };
+            if (context.HasCreatedDateTime)
+                columns.Add("CREATEDDATETIME");
+            if (context.HasModifiedDateTime)
+                columns.Add("MODIFIEDDATETIME");
+
+            string columnList = string.Join(", ", columns);
+            string query = $"SELECT {columnList} FROM [{tableName}] WHERE RecId >= @MinRecId";
+
+            _logger($"[AxDB SQL] Fetching version map: {query} (MinRecId={minRecId})");
+
+            using var command = new SqlCommand(query, connection, transaction);
+            command.Parameters.AddWithValue("@MinRecId", minRecId);
+            command.CommandTimeout = _connectionSettings.CommandTimeout;
+
+            using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                long recId = reader.GetInt64(0);
+                var versionInfo = new AxDbRecordVersion
+                {
+                    RecVersion = reader.GetInt32(1),
+                    CreatedDateTime = context.HasCreatedDateTime ? reader.GetValue(2) : null,
+                    ModifiedDateTime = context.HasModifiedDateTime
+                        ? reader.GetValue(context.HasCreatedDateTime ? 3 : 2)
+                        : null
+                };
+                result[recId] = versionInfo;
+            }
+
+            _logger($"[AxDB] Fetched {result.Count:N0} records for comparison");
+            return result;
+        }
+
+        /// <summary>
+        /// Compare Tier2 data with AxDB version map
+        /// </summary>
+        private ComparisonResult CompareRecords(
+            DataTable tier2Data,
+            Dictionary<long, AxDbRecordVersion> axDbVersions,
+            ComparisonContext context)
+        {
+            var result = new ComparisonResult();
+            var tier2RecIds = new HashSet<long>();
+
+            // Get column names with correct case
+            string recIdCol = GetColumnName(tier2Data, "RECID") ?? "RECID";
+            string recVersionCol = GetColumnName(tier2Data, "RECVERSION") ?? "RECVERSION";
+            string? createdDateTimeCol = context.HasCreatedDateTime
+                ? GetColumnName(tier2Data, "CREATEDDATETIME") : null;
+            string? modifiedDateTimeCol = context.HasModifiedDateTime
+                ? GetColumnName(tier2Data, "MODIFIEDDATETIME") : null;
+
+            foreach (DataRow row in tier2Data.Rows)
+            {
+                if (row[recIdCol] == DBNull.Value)
+                    continue;
+
+                long recId = Convert.ToInt64(row[recIdCol]);
+                tier2RecIds.Add(recId);
+
+                // Check if RecId exists in AxDB
+                if (!axDbVersions.TryGetValue(recId, out var axDbVersion))
+                {
+                    result.NewRecIds.Add(recId);
+                    continue;
+                }
+
+                // Get Tier2 values
+                int tier2RecVersion = Convert.ToInt32(row[recVersionCol]);
+
+                // Fallback mode: exclude RECVERSION=1 from optimization
+                if (context.IsFallbackMode && tier2RecVersion == 1)
+                {
+                    result.ModifiedRecIds.Add(recId);
+                    continue;
+                }
+
+                // Compare all available fields
+                bool allMatch = true;
+
+                // Compare RECVERSION
+                if (tier2RecVersion != axDbVersion.RecVersion)
+                {
+                    allMatch = false;
+                }
+
+                // Compare CREATEDDATETIME if available
+                if (allMatch && context.HasCreatedDateTime && createdDateTimeCol != null)
+                {
+                    object tier2Value = row[createdDateTimeCol];
+                    object? axDbValue = axDbVersion.CreatedDateTime;
+                    if (!ValuesEqual(tier2Value, axDbValue))
+                    {
+                        allMatch = false;
+                    }
+                }
+
+                // Compare MODIFIEDDATETIME if available
+                if (allMatch && context.HasModifiedDateTime && modifiedDateTimeCol != null)
+                {
+                    object tier2Value = row[modifiedDateTimeCol];
+                    object? axDbValue = axDbVersion.ModifiedDateTime;
+                    if (!ValuesEqual(tier2Value, axDbValue))
+                    {
+                        allMatch = false;
+                    }
+                }
+
+                if (allMatch)
+                {
+                    result.UnchangedRecIds.Add(recId);
+                }
+                else
+                {
+                    result.ModifiedRecIds.Add(recId);
+                }
+            }
+
+            // Find deleted records (in AxDB but not in Tier2 set)
+            foreach (var axDbRecId in axDbVersions.Keys)
+            {
+                if (!tier2RecIds.Contains(axDbRecId))
+                {
+                    result.DeletedRecIds.Add(axDbRecId);
+                }
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Compare two values for equality (handles DBNull and null)
+        /// </summary>
+        private bool ValuesEqual(object? value1, object? value2)
+        {
+            // Both null or DBNull
+            if ((value1 == null || value1 == DBNull.Value) &&
+                (value2 == null || value2 == DBNull.Value))
+                return true;
+
+            // One is null/DBNull, other is not
+            if (value1 == null || value1 == DBNull.Value ||
+                value2 == null || value2 == DBNull.Value)
+                return false;
+
+            // Both have values - exact comparison
+            return value1.Equals(value2);
+        }
+
+        /// <summary>
+        /// Deletes records below MinRecId (for full table copy optimization)
+        /// </summary>
+        private async Task DeleteBelowMinRecIdAsync(
+            string tableName,
+            long minRecId,
+            SqlConnection connection,
+            SqlTransaction? transaction,
+            CancellationToken cancellationToken)
+        {
+            string deleteQuery = $"DELETE FROM [{tableName}] WHERE RecId < @MinRecId";
+
+            using var command = new SqlCommand(deleteQuery, connection, transaction);
+            command.Parameters.AddWithValue("@MinRecId", minRecId);
+            command.CommandTimeout = _connectionSettings.CommandTimeout;
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        /// <summary>
+        /// Deletes records by RecId list in batches
+        /// </summary>
+        private async Task DeleteByRecIdListAsync(
+            string tableName,
+            IEnumerable<long> recIds,
+            SqlConnection connection,
+            SqlTransaction? transaction,
+            CancellationToken cancellationToken)
+        {
+            var recIdList = recIds.ToList();
+            if (recIdList.Count == 0)
+                return;
+
+            _logger($"[AxDB] Deleting {recIdList.Count:N0} records by RecId list");
+
+            for (int i = 0; i < recIdList.Count; i += DELETE_BATCH_SIZE)
+            {
+                var batch = recIdList.Skip(i).Take(DELETE_BATCH_SIZE);
+                string inClause = string.Join(",", batch);
+                string deleteQuery = $"DELETE FROM [{tableName}] WHERE RecId IN ({inClause})";
+
+                using var command = new SqlCommand(deleteQuery, connection, transaction);
+                command.CommandTimeout = _connectionSettings.CommandTimeout;
+                await command.ExecuteNonQueryAsync(cancellationToken);
+            }
+        }
+
+        /// <summary>
+        /// Filter DataTable to only include specified RecIds
+        /// </summary>
+        private DataTable FilterDataTableByRecIds(DataTable source, HashSet<long> recIdsToKeep)
+        {
+            var filtered = source.Clone();
+            string recIdCol = GetColumnName(source, "RECID") ?? "RECID";
+
+            foreach (DataRow row in source.Rows)
+            {
+                if (row[recIdCol] != DBNull.Value)
+                {
+                    long recId = Convert.ToInt64(row[recIdCol]);
+                    if (recIdsToKeep.Contains(recId))
+                    {
+                        filtered.ImportRow(row);
+                    }
+                }
+            }
+
+            return filtered;
         }
 
         /// <summary>
@@ -460,5 +903,39 @@ namespace DBCopyTool.Services
 
             return recIds;
         }
+    }
+
+    /// <summary>
+    /// Context for comparison - which fields are available in BOTH databases
+    /// </summary>
+    public class ComparisonContext
+    {
+        public bool HasRecVersion { get; set; }
+        public bool HasCreatedDateTime { get; set; }
+        public bool HasModifiedDateTime { get; set; }
+
+        public bool IsFallbackMode => !HasCreatedDateTime && !HasModifiedDateTime;
+        public bool CanCompare => HasRecVersion;
+    }
+
+    /// <summary>
+    /// Version info for a single AxDB record
+    /// </summary>
+    public class AxDbRecordVersion
+    {
+        public int RecVersion { get; set; }
+        public object? CreatedDateTime { get; set; }   // DateTime, DBNull, or null
+        public object? ModifiedDateTime { get; set; }  // DateTime, DBNull, or null
+    }
+
+    /// <summary>
+    /// Result of comparing Tier2 data with AxDB data
+    /// </summary>
+    public class ComparisonResult
+    {
+        public HashSet<long> UnchangedRecIds { get; set; } = new HashSet<long>();
+        public HashSet<long> ModifiedRecIds { get; set; } = new HashSet<long>();
+        public HashSet<long> NewRecIds { get; set; } = new HashSet<long>();
+        public HashSet<long> DeletedRecIds { get; set; } = new HashSet<long>();
     }
 }
