@@ -20,6 +20,7 @@ namespace DBCopyTool.Services
 
         public event EventHandler<List<TableInfo>>? TablesUpdated;
         public event EventHandler<string>? StatusUpdated;
+        public event EventHandler? TimestampsUpdated;
 
         public CopyOrchestrator(AppConfiguration config, Action<string> logger)
         {
@@ -171,7 +172,6 @@ namespace DBCopyTool.Services
                         RecIdCount = strategy.RecIdCount,
                         SqlTemplate = strategy.SqlTemplate,
                         UseTruncate = strategy.UseTruncate,
-                        NoCompareFlag = strategy.NoCompareFlag,
                         Tier2RowCount = rowCount,
                         Tier2SizeGB = sizeGB,
                         BytesPerRow = bytesPerRow,
@@ -393,8 +393,6 @@ namespace DBCopyTool.Services
         {
             // Reload timestamps from config (they may have been updated)
             _logger($"[{table.TableName}] Reloading timestamps from config...");
-            _logger($"  Config Tier2Timestamps: '{_config.Tier2Timestamps}'");
-            _logger($"  Config AxDBTimestamps: '{_config.AxDBTimestamps}'");
             _timestampManager.LoadFromConfig(_config);
 
             // Parse strategy overrides from current config
@@ -437,7 +435,6 @@ namespace DBCopyTool.Services
             table.RecIdCount = strategy.RecIdCount;
             table.SqlTemplate = strategy.SqlTemplate;
             table.UseTruncate = strategy.UseTruncate;
-            table.NoCompareFlag = strategy.NoCompareFlag;
             table.RecordsToCopy = recordsToCopy;
             table.EstimatedSizeMB = estimatedSizeMB;
             table.FetchSql = fetchSql;
@@ -451,6 +448,7 @@ namespace DBCopyTool.Services
                 _logger($"[{table.TableName}] Optimization enabled (timestamps found)");
             }
         }
+
 
         /// <summary>
         /// Process a single table by name (runs independently without semaphore)
@@ -547,10 +545,16 @@ namespace DBCopyTool.Services
                 table.Status = TableStatus.Fetching;
                 OnTablesUpdated();
 
+                // Pass SQL template for SQL strategy (will replace * with RecId, SysRowVersion)
+                string? sqlTemplate = table.StrategyType == CopyStrategyType.Sql
+                    ? table.SqlTemplate
+                    : null;
+
                 var controlStopwatch = Stopwatch.StartNew();
                 DataTable controlData = await _tier2Service.FetchControlDataAsync(
                     table.TableName,
                     recordCount,
+                    sqlTemplate,
                     cancellationToken);
                 controlStopwatch.Stop();
 
@@ -661,6 +665,7 @@ namespace DBCopyTool.Services
             {
                 _timestampManager.SetTimestamps(table.TableName, tier2MaxTimestamp, axdbMaxTimestamp);
                 _timestampManager.SaveToConfig(_config);
+                OnTimestampsUpdated(); // Trigger auto-save to disk
             }
 
             table.CachedData = null;
@@ -802,6 +807,7 @@ namespace DBCopyTool.Services
                 {
                     _timestampManager.SetTimestamps(table.TableName, tier2MaxTimestamp, axdbMaxTimestamp);
                     _timestampManager.SaveToConfig(_config);
+                    OnTimestampsUpdated(); // Trigger auto-save to disk
                 }
 
                 table.Status = TableStatus.Inserted;
@@ -899,6 +905,29 @@ namespace DBCopyTool.Services
                 // Check for cancellation before insert
                 cancellationToken.ThrowIfCancellationRequested();
 
+                // Smart TRUNCATE detection: If table has SysRowVersion and AxDB has excess records, use TRUNCATE
+                if (!table.UseTruncate && table.CopyableFields.Any(f => f.Equals("SYSROWVERSION", StringComparison.OrdinalIgnoreCase)))
+                {
+                    try
+                    {
+                        long axdbTotalCount = await _axDbService.GetRowCountAsync(table.TableName, cancellationToken);
+                        double excessPercent = table.RecordsFetched > 0
+                            ? (double)(axdbTotalCount - table.RecordsFetched) / table.RecordsFetched * 100
+                            : 0;
+
+                        if (excessPercent > _config.TruncateThresholdPercent)
+                        {
+                            _logger($"[{table.TableName}] Detected excess records in AxDB: {axdbTotalCount:N0} total vs {table.RecordsFetched:N0} syncing ({excessPercent:F1}%)");
+                            _logger($"[{table.TableName}] Auto-enabling TRUNCATE mode (threshold: {_config.TruncateThresholdPercent}%)");
+                            table.UseTruncate = true;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger($"[{table.TableName}] Warning: Could not check AxDB row count: {ex.Message}");
+                    }
+                }
+
                 // STAGE 2: INSERT (includes delete and insert operations)
                 table.Status = TableStatus.Inserting;
                 OnTablesUpdated();
@@ -926,6 +955,7 @@ namespace DBCopyTool.Services
                         {
                             _timestampManager.SetTimestamps(table.TableName, tier2MaxTs, axdbMaxTs);
                             _timestampManager.SaveToConfig(_config);
+                            OnTimestampsUpdated(); // Trigger auto-save to disk
                             _logger($"[{table.TableName}] Timestamps saved for future optimization");
                         }
                     }
@@ -1059,30 +1089,15 @@ namespace DBCopyTool.Services
 
         private StrategyOverride ParseStrategyLine(string line)
         {
-            // Check for -nocompare and -truncate flags at the end
-            bool noCompare = false;
+            // Check for -truncate flag at the end
             bool useTruncate = false;
             string workingLine = line;
-
-            // Check for -nocompare flag
-            if (workingLine.EndsWith(" -nocompare", StringComparison.OrdinalIgnoreCase))
-            {
-                noCompare = true;
-                workingLine = workingLine.Substring(0, workingLine.Length - 11).Trim();
-            }
 
             // Check for -truncate flag
             if (workingLine.EndsWith(" -truncate", StringComparison.OrdinalIgnoreCase))
             {
                 useTruncate = true;
                 workingLine = workingLine.Substring(0, workingLine.Length - 10).Trim();
-            }
-
-            // Check again for -nocompare (in case order is -truncate -nocompare)
-            if (workingLine.EndsWith(" -nocompare", StringComparison.OrdinalIgnoreCase))
-            {
-                noCompare = true;
-                workingLine = workingLine.Substring(0, workingLine.Length - 11).Trim();
             }
 
             // Split by pipe
@@ -1101,8 +1116,7 @@ namespace DBCopyTool.Services
                     TableName = tableName,
                     StrategyType = CopyStrategyType.RecId,
                     RecIdCount = _config.DefaultRecordCount,
-                    UseTruncate = useTruncate,
-                    NoCompareFlag = noCompare
+                    UseTruncate = useTruncate
                 };
             }
 
@@ -1111,7 +1125,7 @@ namespace DBCopyTool.Services
             // Case 2: TableName|sql:... (SQL without explicit count)
             if (part1.StartsWith("sql:", StringComparison.OrdinalIgnoreCase))
             {
-                return ParseSqlStrategy(tableName, part1, null, useTruncate, noCompare);
+                return ParseSqlStrategy(tableName, part1, null, useTruncate);
             }
 
             // Case 3: TableName|Number (RecId strategy)
@@ -1127,7 +1141,7 @@ namespace DBCopyTool.Services
                     if (part2.StartsWith("sql:", StringComparison.OrdinalIgnoreCase))
                     {
                         // Case 4: TableName|Number|sql:... (SQL with explicit count)
-                        return ParseSqlStrategy(tableName, part2, count, useTruncate, noCompare);
+                        return ParseSqlStrategy(tableName, part2, count, useTruncate);
                     }
                     else
                     {
@@ -1140,15 +1154,14 @@ namespace DBCopyTool.Services
                     TableName = tableName,
                     StrategyType = CopyStrategyType.RecId,
                     RecIdCount = count,
-                    UseTruncate = useTruncate,
-                    NoCompareFlag = noCompare
+                    UseTruncate = useTruncate
                 };
             }
 
             throw new Exception($"Invalid format: '{part1}' is not a valid strategy (expected number or 'sql:...')");
         }
 
-        private StrategyOverride ParseSqlStrategy(string tableName, string sqlPart, int? recordCount, bool useTruncate, bool noCompare)
+        private StrategyOverride ParseSqlStrategy(string tableName, string sqlPart, int? recordCount, bool useTruncate)
         {
             // Extract SQL after "sql:" prefix
             string sql = sqlPart.Substring(4).Trim();
@@ -1166,8 +1179,7 @@ namespace DBCopyTool.Services
                 StrategyType = CopyStrategyType.Sql,
                 RecIdCount = recordCount,
                 SqlTemplate = sql,
-                UseTruncate = useTruncate,
-                NoCompareFlag = noCompare
+                UseTruncate = useTruncate
             };
         }
 
@@ -1183,8 +1195,7 @@ namespace DBCopyTool.Services
                 StrategyType = CopyStrategyType.RecId,
                 RecIdCount = _config.DefaultRecordCount,
                 SqlTemplate = string.Empty,
-                UseTruncate = false,
-                NoCompareFlag = false
+                UseTruncate = false
             };
         }
 
@@ -1313,6 +1324,11 @@ namespace DBCopyTool.Services
         {
             StatusUpdated?.Invoke(this, status);
         }
+
+        private void OnTimestampsUpdated()
+        {
+            TimestampsUpdated?.Invoke(this, EventArgs.Empty);
+        }
     }
 
     // Helper class for strategy parsing
@@ -1323,7 +1339,6 @@ namespace DBCopyTool.Services
         public int? RecIdCount { get; set; }      // For RecId strategy or SQL with explicit count
         public string SqlTemplate { get; set; } = string.Empty;  // For SQL strategy (raw template with * and @recordCount)
         public bool UseTruncate { get; set; }
-        public bool NoCompareFlag { get; set; }
     }
 
     // Comparer for SQL Server timestamps

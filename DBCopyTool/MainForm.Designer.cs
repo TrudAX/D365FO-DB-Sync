@@ -307,23 +307,24 @@ namespace DBCopyTool
             lblStrategyOverrides.Text = "Per-Table Strategy (?)";
             ToolTip tooltip = new ToolTip();
             tooltip.SetToolTip(lblStrategyOverrides,
-                "Format: TableName|SourceStrategy|where:condition -truncate\n\n" +
-                "Source strategies:\n" +
-                "  5000              Top N records by RecId\n" +
-                "  days:30           Records modified in last N days\n" +
-                "  all               Full table copy (truncates destination)\n" +
-                "  where:FIELD='X'   All records matching condition\n\n" +
-                "Combinations:\n" +
-                "  5000|where:DATAAREAID='1000'      Top N with filter\n" +
-                "  days:30|where:DATAAREAID='1000'   Last N days with filter\n\n" +
-                "Options:\n" +
-                "  -truncate         Truncate destination before insert\n\n" +
+                "Simplified Strategy Syntax (one per line):\n\n" +
+                "RecId Strategy:\n" +
+                "  TABLENAME               Use default record count\n" +
+                "  TABLENAME|5000          Top 5000 records by RecId DESC\n\n" +
+                "SQL Strategy (custom query):\n" +
+                "  TABLENAME|sql:SELECT * FROM TABLENAME WHERE DATAAREAID='1000'\n" +
+                "  TABLENAME|5000|sql:SELECT * FROM TABLENAME WHERE POSTED=1\n\n" +
+                "SQL Placeholders:\n" +
+                "  *              Replaced with actual field list\n" +
+                "  @recordCount   Replaced with record count (default or specified)\n\n" +
+                "Flags:\n" +
+                "  -truncate      Force TRUNCATE instead of delta comparison\n\n" +
                 "Examples:\n" +
-                "  CUSTTABLE|5000\n" +
-                "  SALESLINE|days:30\n" +
-                "  INVENTTRANS|all\n" +
-                "  CUSTTRANS|5000|where:DATAAREAID='1000'\n" +
-                "  VENDTABLE|days:14|where:POSTED=1 -truncate");
+                "  CUSTTABLE\n" +
+                "  SALESLINE|10000\n" +
+                "  INVENTTRANS|sql:SELECT * FROM INVENTTRANS WHERE DATAAREAID='USMF'\n" +
+                "  CUSTTRANS|5000|sql:SELECT TOP (@recordCount) * FROM CUSTTRANS WHERE BLOCKED=0\n" +
+                "  VENDTABLE|5000 -truncate");
 
             txtStrategyOverrides.Location = new Point(10, 45);
             txtStrategyOverrides.Multiline = true;

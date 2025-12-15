@@ -558,6 +558,7 @@ namespace DBCopyTool
                 _orchestrator = new CopyOrchestrator(_currentConfig, Log);
                 _orchestrator.TablesUpdated += Orchestrator_TablesUpdated;
                 _orchestrator.StatusUpdated += Orchestrator_StatusUpdated;
+                _orchestrator.TimestampsUpdated += Orchestrator_TimestampsUpdated;
 
                 await _orchestrator.PrepareTableListAsync();
             });
@@ -621,6 +622,7 @@ namespace DBCopyTool
                 _orchestrator = new CopyOrchestrator(_currentConfig, Log);
                 _orchestrator.TablesUpdated += Orchestrator_TablesUpdated;
                 _orchestrator.StatusUpdated += Orchestrator_StatusUpdated;
+                _orchestrator.TimestampsUpdated += Orchestrator_TimestampsUpdated;
 
                 await _orchestrator.RunAllStagesAsync();
             });
@@ -1063,6 +1065,23 @@ namespace DBCopyTool
             UpdateStatus(status);
         }
 
+        private void Orchestrator_TimestampsUpdated(object? sender, EventArgs e)
+        {
+            // Save configuration immediately when timestamps are updated
+            if (!string.IsNullOrWhiteSpace(_currentConfig.ConfigName))
+            {
+                try
+                {
+                    _configManager.SaveConfiguration(_currentConfig);
+                    // Don't log here to avoid spamming - only log at the end in ExecuteOperationAsync
+                }
+                catch (Exception ex)
+                {
+                    Log($"Warning: Could not auto-save configuration: {ex.Message}");
+                }
+            }
+        }
+
         private void UpdateTimer_Tick(object? sender, EventArgs e)
         {
             if (_orchestrator != null)
@@ -1100,6 +1119,20 @@ namespace DBCopyTool
 
                 // Refresh timestamp UI (they may have been updated during processing)
                 RefreshTimestampUI();
+
+                // Auto-save configuration to persist timestamps
+                if (!string.IsNullOrWhiteSpace(_currentConfig.ConfigName))
+                {
+                    try
+                    {
+                        _configManager.SaveConfiguration(_currentConfig);
+                        Log($"Configuration auto-saved (timestamps updated)");
+                    }
+                    catch (Exception ex)
+                    {
+                        Log($"Warning: Could not auto-save configuration: {ex.Message}");
+                    }
+                }
             }
         }
 

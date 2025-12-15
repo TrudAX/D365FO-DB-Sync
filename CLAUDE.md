@@ -53,16 +53,28 @@ Version format: `1.0.YYYY.DayOfYear` (auto-increments with each build using MSBu
 
 ### Copy Strategy System
 
-The tool supports six strategy types defined in `Models/TableInfo.cs`:
+The tool supports two simplified strategy types defined in `Models/TableInfo.cs`:
 
-- **RecId**: Top N records by RecId (e.g., `CUSTTABLE|5000`)
-- **ModifiedDate**: Records modified in last N days (e.g., `SALESLINE|days:30`)
-- **Where**: All records matching custom SQL condition (e.g., `INVENTTRANS|where:DATAAREAID='1000'`)
-- **RecIdWithWhere**: RecId + WHERE combined (e.g., `CUSTTRANS|5000|where:POSTED=1`)
-- **ModifiedDateWithWhere**: Days + WHERE combined (e.g., `SALESTABLE|days:14|where:STATUS=3`)
-- **All**: Full table copy with automatic truncate (e.g., `VENDTABLE|all`)
+- **RecId**: Top N records by RecId DESC (e.g., `CUSTTABLE|5000`)
+- **Sql**: Custom SQL queries with placeholders (e.g., `CUSTTABLE|sql:SELECT * FROM CUSTTABLE WHERE DATAAREAID='USMF'`)
 
-Add `-truncate` flag to any strategy to force truncate before insert.
+**Strategy Syntax:**
+```
+TableName|RecordCount|sql:CustomQuery -truncate
+```
+
+**Examples:**
+- `CUSTTABLE` - RecId strategy with default count
+- `SALESLINE|10000` - RecId strategy with 10,000 records
+- `INVENTTRANS|sql:SELECT * FROM INVENTTRANS WHERE DATAAREAID='USMF'` - SQL strategy
+- `CUSTTRANS|5000|sql:SELECT TOP (@recordCount) * FROM CUSTTRANS WHERE BLOCKED=0` - SQL with count
+- `VENDTABLE|5000 -truncate` - Force truncate mode
+
+**SQL Placeholders:**
+- `*` - Replaced with actual field list (only common fields between Tier2 and AxDB)
+- `@recordCount` - Replaced with record count (default or explicitly specified)
+
+Add `-truncate` flag to any strategy to force TRUNCATE mode before insert.
 
 ### SQLDICTIONARY Caching
 
@@ -85,6 +97,15 @@ Critical optimization in `Models/SqlDictionaryCache.cs`:
 - Two separate exclusion lists: user-defined (`TablesToExclude`) and system-level (`SystemExcludedTables`)
 - Strategy overrides use pipe-delimited format parsed in `CopyOrchestrator`
 - `ParallelWorkers` setting controls concurrent table processing (default: 10)
+- Timestamp storage: `Tier2Timestamps` and `AxDBTimestamps` store newline-separated entries (`TableName|0xHEXVALUE`)
+- `TruncateThresholdPercent` controls INCREMENTAL vs TRUNCATE mode decision (default: 40)
+
+**TimestampManager** (`Helpers/TimestampManager.cs`)
+- Dictionary-based storage for SysRowVersion timestamps per table
+- Parses hex string format: `0x0000000012345678` → byte[8]
+- `LoadFromConfig()` and `SaveToConfig()` for persistence
+- Auto-saved after each table completion (crash-safe)
+- `TimestampsUpdated` event triggers immediate disk save in MainForm
 
 ## D365FO Specific Concepts
 
@@ -103,9 +124,16 @@ Critical optimization in `Models/SqlDictionaryCache.cs`:
 
 **MODIFIEDDATETIME Field**
 - Standard D365FO audit field tracking last modification
-- Required for ModifiedDate strategies
-- Not all tables have this field (validation occurs in Discover Tables stage)
-- Used to calculate cutoff date: Current UTC datetime minus configured days
+- Used in delta comparison v2 for change detection
+- Not all tables have this field
+
+**SysRowVersion Field**
+- Binary(8) timestamp field automatically maintained by SQL Server
+- Increases monotonically with each update to the row
+- Used for optimized change detection between Tier2 and AxDB
+- Enables 99%+ data transfer reduction when no changes detected
+- Stored as hex string format in config: `0x0000000012345678`
+- Critical for INCREMENTAL vs TRUNCATE mode decision
 
 **Sequence Management**
 - After bulk insert, sequences must be updated to max(RecId)+1
@@ -120,27 +148,102 @@ Critical optimization in `Models/SqlDictionaryCache.cs`:
 
 ## Context-Aware Cleanup Logic
 
-Located in `AxDbDataService.InsertDataAsync()`. The cleanup strategy is determined by the copy strategy type:
+Located in `AxDbDataService.InsertDataAsync()` and `CopyOrchestrator.cs`. The cleanup strategy is determined by optimization mode and copy strategy.
 
-- **RecId only**: `DELETE WHERE RecId >= @MinRecId`
-- **ModifiedDate only**: Two-step delete:
-  1. `DELETE WHERE MODIFIEDDATETIME >= @CutoffDate`
-  2. `DELETE WHERE RecId IN (@FetchedRecIdList)` (handles records modified in Tier2 with old dates in AxDB)
-- **WHERE only**: Two-step delete:
-  1. `DELETE WHERE (whereClause)`
-  2. `DELETE WHERE RecId >= @MinRecId`
-- **RecId + WHERE**: Two-step delete:
-  1. `DELETE WHERE (whereClause)`
-  2. `DELETE WHERE RecId >= @MinRecId`
-- **ModifiedDate + WHERE**: Three-step delete:
-  1. `DELETE WHERE MODIFIEDDATETIME >= @CutoffDate`
-  2. `DELETE WHERE (whereClause)`
-  3. `DELETE WHERE RecId IN (@FetchedRecIdList)`
-- **ALL or -truncate flag**: `TRUNCATE TABLE`
+### SysRowVersion Optimization Modes
 
-**Important:** When `-truncate` is used, sequence is still updated to max RecId after insert.
+For tables with `SysRowVersion` column, the tool uses intelligent optimization:
 
-This ensures clean data replacement without orphaned records. The multi-step approach handles edge cases like records that were modified in Tier2 but have old timestamps in AxDB.
+**First Run (Standard Mode):**
+1. Fetch data from Tier2 using copy strategy (RecId or SQL)
+2. Perform delta comparison v2 using RECVERSION + datetime fields
+3. Smart TRUNCATE detection: Check AxDB total row count
+   - If `AxDB_count - Fetched_count > Threshold%`: Auto-enable TRUNCATE mode
+   - Otherwise: Use delta comparison mode
+4. Save Tier2 and AxDB max(SysRowVersion) timestamps to config
+5. Auto-save config to disk (crash-safe)
+
+**Subsequent Runs (Optimized Mode):**
+1. Load stored timestamps from config (Tier2 and AxDB)
+2. Fetch control query: `SELECT RecId, SysRowVersion` (~1KB per 1000 records vs ~100MB for full data)
+3. Calculate change percentages:
+   - Tier2 changes: Records with `SysRowVersion > StoredTier2Timestamp`
+   - AxDB changes: Records with `SysRowVersion > StoredAxDBTimestamp`
+   - Change percent: `(Tier2Changed + AxDBChanged) / TotalRecords * 100`
+4. Mode selection:
+   - **INCREMENTAL Mode** (changes < threshold): 3-step selective sync
+   - **TRUNCATE Mode** (changes ≥ threshold): Full table refresh
+
+### INCREMENTAL Mode (3-Step Sync)
+
+Used when changes < threshold (default 40%). Minimizes data transfer and processing:
+
+**Step 1 - Delete Tier2-modified records:**
+```sql
+DELETE FROM AxDB.TableName
+WHERE RecId IN (SELECT RecId FROM ControlData WHERE SysRowVersion > @StoredTier2Timestamp)
+```
+
+**Step 2 - Delete AxDB-modified records:**
+```sql
+DELETE FROM AxDB.TableName
+WHERE RecId IN (SELECT RecId FROM ControlData WHERE SysRowVersion > @StoredAxDBTimestamp)
+```
+
+**Step 3 - Fetch and insert:**
+1. Identify missing RecIds: Records in ControlData not in AxDB
+2. Calculate fetch threshold: `MIN(MIN(SysRowVersion of missing RecIds), StoredTier2Timestamp)`
+3. Fetch from Tier2: `WHERE SysRowVersion >= @Threshold AND RecId >= @MinRecId`
+4. Filter client-side: Remove RecIds that already exist in AxDB
+5. Bulk insert remaining records
+6. Save new timestamps (Tier2 and AxDB max values)
+
+**Why this works:**
+- Deleted records in steps 1-2 will be re-inserted in step 3 (they're in ControlData but not in AxDB after delete)
+- Records modified only in Tier2: Deleted in step 1, re-inserted in step 3
+- Records modified only in AxDB: Deleted in step 2, re-inserted in step 3
+- Records modified in both: Deleted in steps 1-2, re-inserted in step 3
+- Unchanged records: Not touched (skipped)
+
+### TRUNCATE Mode (Full Refresh)
+
+Used when changes ≥ threshold OR `-truncate` flag OR first run with excess records:
+
+1. `TRUNCATE TABLE AxDB.TableName`
+2. Fetch all records from Tier2 using copy strategy
+3. Bulk insert all records
+4. Update sequence to max(RecId)+1
+5. Save new timestamps (Tier2 and AxDB max values)
+
+**Triggers TRUNCATE mode when:**
+- Change percentage ≥ threshold (default 40%)
+- `-truncate` flag specified in strategy
+- First run detected excess records: `(AxDB_count - Fetched_count) / Fetched_count > Threshold%`
+
+### Delta Comparison v2 (Standard Mode)
+
+Used for tables without SysRowVersion OR when optimization not available:
+
+1. Fetch data from Tier2 using copy strategy
+2. Fetch AxDB versions: `SELECT RecId, RECVERSION, MODIFIEDDATETIME, MODIFIEDBY, CREATEDDATETIME FROM AxDB.TableName`
+3. Compare using multi-field logic:
+   - **Unchanged**: Same RecId + same RECVERSION (RECVERSION > 1 only)
+   - **Modified**: Same RecId + different RECVERSION
+   - **New in Tier2**: RecId in Tier2 but not in AxDB
+   - **Deleted from AxDB**: RecId in AxDB but not in Tier2 fetched set
+4. Delete strategy based on copy strategy:
+   - **RecId strategy**: `DELETE WHERE RecId >= @MinRecId`
+   - **SQL strategy**: `DELETE WHERE RecId >= @MinRecId`
+   - **With -truncate**: `TRUNCATE TABLE`
+5. Bulk insert all fetched records
+6. Update sequence to max(RecId)+1
+
+**Important Notes:**
+- RECVERSION=1 records are never considered "unchanged" (always treated as new/modified)
+- Delta comparison v2 uses RECVERSION as primary comparison field
+- MODIFIEDDATETIME, MODIFIEDBY, CREATEDDATETIME used as tiebreakers
+- When `-truncate` is used, sequence is still updated to max RecId after insert
+- Timestamps auto-saved after each table (crash-safe persistence)
 
 ## Key Features
 
@@ -176,33 +279,66 @@ This ensures clean data replacement without orphaned records. The multi-step app
 
 ## Development Notes
 
+### General
 - Password handling uses simple Base64 obfuscation (not encryption) via `EncryptionHelper`
 - All SQL operations are logged with timestamps `[HH:mm:ss]` to the MainForm log TextBox
 - Log separator between stages: "─────────────────────────────────────────────"
 - Connection strings differ for Azure SQL (with Encrypt=True, ApplicationIntent=ReadOnly) vs local SQL Server
 - DataTable caching in `TableInfo.CachedData` cleared immediately after successful insert, retained only for failed tables
 - Status enum progression: Pending → Fetching → Inserting → Inserted (or FetchError/InsertError)
-- Configuration files stored in `Config/` folder relative to application startup path
+
+### Configuration & Persistence
+- Configuration files stored in `Config/` folder relative to application startup path (gitignored)
 - Last used configuration tracked in `Config/.lastconfig` file
 - Config names must be alphanumeric with underscores/hyphens only (max 100 characters)
 - Alias field (max 30 chars) updates Connection tab title dynamically: "Connection-{Alias}"
 - Alias used as default filename when saving new configuration
+- **Timestamp persistence**: Auto-saved after EACH table completion (crash-safe)
+- `TimestampsUpdated` event in CopyOrchestrator triggers immediate config save to disk
+- Final config save in `ExecuteOperationAsync` finally block for UI refresh
+
+### SysRowVersion Optimization
+- **TimestampHelper** (`Helpers/TimestampHelper.cs`): Binary timestamp utility methods
+  - `ToHexString(byte[])`: Converts byte[8] → "0x0000000012345678"
+  - `FromHexString(string)`: Parses hex string → byte[8] (handles "0x" prefix correctly)
+  - `MinTimestamp(byte[], byte[])`: Returns smaller of two timestamps
+  - **Critical**: Uses `StartsWith("0x")` + `Substring(2)` to avoid removing all leading zeros
+- **TimestampComparer**: IComparer for byte[] timestamp comparison
+- **Smart TRUNCATE Detection**: In standard mode, checks AxDB total row count after fetch
+  - Auto-enables TRUNCATE if `(AxDB_count - Fetched_count) / Fetched_count > Threshold%`
+  - Ensures first run consistency with subsequent optimized runs
+- **ReapplyStrategyForTable**: Reloads timestamps from config when processing single table via "Process Selected"
+
+### Database Operations
 - Insert operations use transaction with rollback on error
 - Triggers always re-enabled in finally block even on error
 - SqlBulkCopy settings: table lock enabled, batch size 10,000 rows
 - Connection timeout only used for Tier2 (default: 3 seconds)
 - Command timeout: Tier2 default 600 seconds, AxDB default 0 (unlimited)
-- Memory usage: Significantly reduced with merged workflow (only N tables in memory where N = parallel workers, vs all tables in old design)
+
+### Memory & Performance
+- Memory usage: Significantly reduced with merged workflow (only N tables in memory where N = parallel workers)
+- Control queries for optimization: ~1KB per 1000 records vs ~100MB for full data
 - UI updates: Table list refreshes every 3 seconds during execution, status line updates per table completion
+- SQLDICTIONARY caching provides 10-20x speedup over individual metadata queries
 
 ## Common Modification Patterns
 
 **Adding a new copy strategy:**
 1. Add enum value to `CopyStrategyType` in `Models/TableInfo.cs`
 2. Update `ParseStrategyLine()` in `CopyOrchestrator.cs` to parse new syntax
-3. Add case to `GenerateFetchSql()` for query generation
-4. Update cleanup logic in `AxDbDataService.InsertDataAsync()`
-5. Update `StrategyDisplay` property for UI display
+3. Add case to `GenerateFetchSql()` in `Tier2DataService.cs` for query generation
+4. Update cleanup logic in delta comparison section of `AxDbDataService.InsertDataAsync()`
+5. Update `StrategyDisplay` property in `TableInfo.cs` for UI display
+6. Update help tooltip in `MainForm.Designer.cs`
+
+**Modifying SysRowVersion optimization:**
+- Threshold logic in `CopyOrchestrator.cs` within optimized mode section
+- INCREMENTAL mode: 3-step delete + fetch in `CopyOrchestrator.cs`
+- TRUNCATE mode: Full refresh logic in both `CopyOrchestrator.cs` and `AxDbDataService.cs`
+- Control query: `FetchControlDataAsync()` in `Tier2DataService.cs`
+- Timestamp comparison: `TimestampComparer` class for byte[] comparisons
+- Smart TRUNCATE detection: Added after fetch in standard mode (checks AxDB total row count)
 
 **Modifying exclusion behavior:**
 - Combined exclusions handled in `CombineExclusionPatterns()` in `CopyOrchestrator.cs`

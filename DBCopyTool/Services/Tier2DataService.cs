@@ -198,12 +198,27 @@ namespace DBCopyTool.Services
         public async Task<DataTable> FetchControlDataAsync(
             string tableName,
             int recordCount,
+            string? sqlTemplate,
             CancellationToken cancellationToken)
         {
-            string sql = $@"
+            string sql;
+
+            if (!string.IsNullOrWhiteSpace(sqlTemplate))
+            {
+                // SQL strategy: Replace * with RecId, SysRowVersion
+                // Also replace @recordCount placeholder if present
+                sql = sqlTemplate
+                    .Replace("*", "RecId, SysRowVersion", StringComparison.OrdinalIgnoreCase)
+                    .Replace("@recordCount", recordCount.ToString());
+            }
+            else
+            {
+                // RecId strategy: Default control query
+                sql = $@"
                 SELECT TOP ({recordCount}) RecId, SysRowVersion
                 FROM [{tableName}]
                 ORDER BY RecId DESC";
+            }
 
             _logger($"[Tier2 SQL] Control query: {sql}");
 

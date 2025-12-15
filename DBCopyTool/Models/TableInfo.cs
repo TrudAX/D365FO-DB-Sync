@@ -13,7 +13,6 @@ namespace DBCopyTool.Models
         public int? RecIdCount { get; set; }       // Explicit count or null for default
         public string SqlTemplate { get; set; } = string.Empty;  // For SQL strategy
         public bool UseTruncate { get; set; }    // -truncate flag
-        public bool NoCompareFlag { get; set; }  // -nocompare flag to disable delta comparison
 
         // Tier2 Info
         public long Tier2RowCount { get; set; }
@@ -77,9 +76,6 @@ namespace DBCopyTool.Models
 
                 if (UseTruncate)
                     parts.Add("TRUNC");
-
-                if (NoCompareFlag)
-                    parts.Add("NOCMP");
 
                 return string.Join(" ", parts);
             }

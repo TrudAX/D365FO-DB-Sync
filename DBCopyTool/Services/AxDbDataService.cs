@@ -523,10 +523,6 @@ namespace DBCopyTool.Services
         /// </summary>
         private bool ShouldUseComparison(TableInfo tableInfo)
         {
-            // Skip if explicitly disabled
-            if (tableInfo.NoCompareFlag)
-                return false;
-
             // Skip if truncating (no point comparing)
             if (tableInfo.UseTruncate)
                 return false;
