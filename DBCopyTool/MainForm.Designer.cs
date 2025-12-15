@@ -315,8 +315,10 @@ namespace DBCopyTool
                 "  TABLENAME|sql:SELECT * FROM TABLENAME WHERE DATAAREAID='1000'\n" +
                 "  TABLENAME|5000|sql:SELECT * FROM TABLENAME WHERE POSTED=1\n\n" +
                 "SQL Placeholders:\n" +
-                "  *              Replaced with actual field list\n" +
-                "  @recordCount   Replaced with record count (default or specified)\n\n" +
+                "  *                     Replaced with actual field list\n" +
+                "  @recordCount          Replaced with record count (default or specified)\n" +
+                "  @sysRowVersionFilter  Replaced with SysRowVersion >= threshold AND RecId >= minRecId\n" +
+                "                        (Required for SQL strategies to use INCREMENTAL optimization)\n\n" +
                 "Flags:\n" +
                 "  -truncate      Force TRUNCATE instead of delta comparison\n\n" +
                 "Examples:\n" +
@@ -324,7 +326,9 @@ namespace DBCopyTool
                 "  SALESLINE|10000\n" +
                 "  INVENTTRANS|sql:SELECT * FROM INVENTTRANS WHERE DATAAREAID='USMF'\n" +
                 "  CUSTTRANS|5000|sql:SELECT TOP (@recordCount) * FROM CUSTTRANS WHERE BLOCKED=0\n" +
-                "  VENDTABLE|5000 -truncate");
+                "  VENDTABLE|5000 -truncate\n\n" +
+                "Examples with optimization:\n" +
+                "  INVENTDIM|50000|sql:SELECT * FROM INVENTDIM WHERE DATAAREAID='1000' AND @sysRowVersionFilter ORDER BY RecId DESC");
 
             txtStrategyOverrides.Location = new Point(10, 45);
             txtStrategyOverrides.Multiline = true;

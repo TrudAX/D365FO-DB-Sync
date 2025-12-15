@@ -207,9 +207,11 @@ namespace DBCopyTool.Services
             {
                 // SQL strategy: Replace * with RecId, SysRowVersion
                 // Also replace @recordCount placeholder if present
+                // Replace @sysRowVersionFilter with (1 = 1) - not used in control queries
                 sql = sqlTemplate
                     .Replace("*", "RecId, SysRowVersion", StringComparison.OrdinalIgnoreCase)
-                    .Replace("@recordCount", recordCount.ToString());
+                    .Replace("@recordCount", recordCount.ToString())
+                    .Replace("@sysRowVersionFilter", "(1 = 1)", StringComparison.OrdinalIgnoreCase);
             }
             else
             {
@@ -244,15 +246,31 @@ namespace DBCopyTool.Services
             int recordCount,
             byte[] timestampThreshold,
             long minRecId,
+            string? sqlTemplate,
             CancellationToken cancellationToken)
         {
+            string sql;
             string fieldList = string.Join(", ", fields.Select(f => $"[{f}]"));
-            string sql = $@"
+
+            if (!string.IsNullOrWhiteSpace(sqlTemplate) &&
+                sqlTemplate.Contains("@sysRowVersionFilter", StringComparison.OrdinalIgnoreCase))
+            {
+                // SQL strategy with placeholder: Use template
+                sql = sqlTemplate
+                    .Replace("*", fieldList, StringComparison.OrdinalIgnoreCase)
+                    .Replace("@recordCount", recordCount.ToString())
+                    .Replace("@sysRowVersionFilter", "SysRowVersion >= @Threshold AND RecId >= @MinRecId", StringComparison.OrdinalIgnoreCase);
+            }
+            else
+            {
+                // RecId strategy OR SQL without placeholder: Use default query
+                sql = $@"
                 SELECT TOP ({recordCount}) {fieldList}
                 FROM [{tableName}]
                 WHERE SysRowVersion >= @Threshold
                   AND RecId >= @MinRecId
                 ORDER BY RecId DESC";
+            }
 
             _logger($"[Tier2 SQL] Timestamp query: {sql}");
 

@@ -53,6 +53,15 @@ VENDTABLE|5000|sql:SELECT * FROM VENDTABLE WHERE POSTED=1 -truncate
 **SQL Placeholders:**
 - `*` - Replaced with actual field list (only common fields between Tier2 and AxDB)
 - `@recordCount` - Replaced with record count (default or explicitly specified)
+- `@sysRowVersionFilter` - Replaced with `SysRowVersion >= @Threshold AND RecId >= @MinRecId`
+  - **Required for SQL strategies to enable INCREMENTAL mode optimization**
+  - If missing, SQL strategies will fall back to standard mode (delta comparison or TRUNCATE based on normal logic)
+
+**Examples with optimization:**
+```
+INVENTDIM|50000|sql:SELECT * FROM INVENTDIM WHERE DATAAREAID='1000' AND @sysRowVersionFilter ORDER BY RecId DESC
+CUSTTRANS|5000|sql:SELECT TOP (@recordCount) * FROM CUSTTRANS WHERE BLOCKED=0 AND @sysRowVersionFilter
+```
 
 ### SysRowVersion Optimization
 

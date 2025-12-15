@@ -73,6 +73,11 @@ TableName|RecordCount|sql:CustomQuery -truncate
 **SQL Placeholders:**
 - `*` - Replaced with actual field list (only common fields between Tier2 and AxDB)
 - `@recordCount` - Replaced with record count (default or explicitly specified)
+- `@sysRowVersionFilter` - Replaced with `SysRowVersion >= @Threshold AND RecId >= @MinRecId`
+  - Required in SQL strategies for INCREMENTAL mode optimization
+  - Without this placeholder, SQL strategies fall back to standard mode (delta comparison or TRUNCATE based on normal logic)
+  - User must manually add this placeholder to their SQL query WHERE clause
+  - Example: `INVENTDIM|50000|sql:SELECT * FROM INVENTDIM WHERE DATAAREAID='1000' AND @sysRowVersionFilter ORDER BY RecId DESC`
 
 Add `-truncate` flag to any strategy to force TRUNCATE mode before insert.
 

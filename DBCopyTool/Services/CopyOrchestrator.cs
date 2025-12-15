@@ -540,6 +540,19 @@ namespace DBCopyTool.Services
             {
                 int recordCount = table.RecIdCount ?? _config.DefaultRecordCount;
 
+                // Check if SQL strategy can use optimized mode (must have @sysRowVersionFilter placeholder)
+                if (table.StrategyType == CopyStrategyType.Sql)
+                {
+                    if (string.IsNullOrWhiteSpace(table.SqlTemplate) ||
+                        !table.SqlTemplate.Contains("@sysRowVersionFilter", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // SQL strategy without placeholder: fall back to standard mode
+                        table.UseOptimizedMode = false;
+                        await ProcessTableStandardModeAsync(table, cancellationToken);
+                        return;
+                    }
+                }
+
                 // STEP 1: Fetch control data (RecId, SysRowVersion)
                 _logger($"[{table.TableName}] Optimized mode: Fetching control data");
                 table.Status = TableStatus.Fetching;
@@ -739,12 +752,18 @@ namespace DBCopyTool.Services
                     _logger($"[{table.TableName}] Fetching missing records (expected {missingRecIds.Count})");
                     var fetchStopwatch = Stopwatch.StartNew();
 
+                    // Pass SQL template for SQL strategy (will use @sysRowVersionFilter placeholder if present)
+                    string? sqlTemplate = table.StrategyType == CopyStrategyType.Sql
+                        ? table.SqlTemplate
+                        : null;
+
                     DataTable tier2Data = await _tier2Service.FetchDataByTimestampAsync(
                         table.TableName,
                         table.CopyableFields,
                         table.RecIdCount ?? _config.DefaultRecordCount,
                         fetchThreshold,
                         minRecId,
+                        sqlTemplate,
                         cancellationToken);
 
                     table.FetchTimeSeconds = (decimal)fetchStopwatch.Elapsed.TotalSeconds;
@@ -863,18 +882,10 @@ namespace DBCopyTool.Services
         }
 
         /// <summary>
-        /// Process a single table: fetch → insert → clear memory
+        /// Process table using standard mode (fetch → compare → delete → insert)
         /// </summary>
-        private async Task ProcessSingleTableAsync(TableInfo table, CancellationToken cancellationToken)
+        private async Task ProcessTableStandardModeAsync(TableInfo table, CancellationToken cancellationToken)
         {
-            // Route to optimized mode if available
-            if (table.UseOptimizedMode)
-            {
-                await ProcessTableOptimizedAsync(table, cancellationToken);
-                return;
-            }
-
-            // Standard mode (existing logic)
             try
             {
                 // STAGE 1: FETCH
@@ -1006,6 +1017,22 @@ namespace DBCopyTool.Services
                 table.Error = ex.Message;
                 _logger($"ERROR processing {table.TableName}: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Process a single table: fetch → insert → clear memory
+        /// </summary>
+        private async Task ProcessSingleTableAsync(TableInfo table, CancellationToken cancellationToken)
+        {
+            // Route to optimized mode if available
+            if (table.UseOptimizedMode)
+            {
+                await ProcessTableOptimizedAsync(table, cancellationToken);
+                return;
+            }
+
+            // Standard mode
+            await ProcessTableStandardModeAsync(table, cancellationToken);
         }
 
         /// <summary>
