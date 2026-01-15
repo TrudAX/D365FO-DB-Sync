@@ -288,7 +288,11 @@ namespace DBSyncTool.Services
 
             using var connection = new SqlConnection(_connectionString);
             using var command = new SqlCommand(sql, connection);
-            command.Parameters.Add("@Threshold", System.Data.SqlDbType.Binary, 8).Value = timestampThreshold;
+
+            // Ensure timestamp parameter is never null - use minimum timestamp (all zeros) if null
+            var param = command.Parameters.Add("@Threshold", System.Data.SqlDbType.Binary, 8);
+            param.Value = timestampThreshold ?? new byte[8];
+
             command.Parameters.AddWithValue("@MinRecId", minRecId);
             command.CommandTimeout = _connectionSettings.CommandTimeout;
 

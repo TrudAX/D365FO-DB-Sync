@@ -751,11 +751,16 @@ namespace DBSyncTool.Services
                     // Get timestamps for missing RecIds from control data
                     var missingTimestamps = table.ControlData!.AsEnumerable()
                         .Where(r => missingRecIds.Contains(r.Field<long>("RecId")))
-                        .Select(r => r.Field<byte[]>("SysRowVersion"))
+                        .Select(r => r.Field<byte[]?>("SysRowVersion"))
+                        .Where(t => t != null)  // Filter out null timestamps
                         .ToList();
 
-                    byte[] minMissingTimestamp = missingTimestamps.Min(new TimestampComparer())!;
-                    byte[] fetchThreshold = TimestampHelper.MinTimestamp(minMissingTimestamp, table.StoredTier2Timestamp)!;
+                    // If no valid timestamps found, use minimum timestamp (all zeros)
+                    byte[] minMissingTimestamp = missingTimestamps.Any()
+                        ? missingTimestamps.Min(new TimestampComparer())!
+                        : new byte[8];
+
+                    byte[] fetchThreshold = TimestampHelper.MinTimestamp(minMissingTimestamp, table.StoredTier2Timestamp) ?? new byte[8];
                     long minRecId = table.ControlData!.AsEnumerable().Min(r => r.Field<long>("RecId"));
 
                     // Step 2.2: Fetch data from Tier2 using timestamp threshold (includes more records than needed)
