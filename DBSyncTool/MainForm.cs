@@ -29,6 +29,23 @@ namespace DBSyncTool
             InitializeDataGrid();
             LoadInitialConfiguration();
             UpdateButtonStates();
+
+            // Register form closing event for cleanup
+            this.FormClosing += MainForm_FormClosing;
+        }
+
+        private void MainForm_FormClosing(object? sender, FormClosingEventArgs e)
+        {
+            // Cleanup orchestrator and event handlers
+            UnsubscribeOrchestratorEvents();
+            _orchestrator = null;
+
+            // Clear binding list to release table references
+            _tablesBindingList.Clear();
+
+            // Stop and dispose update timer
+            _updateTimer.Stop();
+            _updateTimer.Dispose();
         }
 
         private void InitializeDataGrid()
@@ -555,6 +572,7 @@ namespace DBSyncTool
             await ExecuteOperationAsync(async () =>
             {
                 SaveConfigurationFromUI();
+                UnsubscribeOrchestratorEvents();
                 _orchestrator = new CopyOrchestrator(_currentConfig, Log);
                 _orchestrator.TablesUpdated += Orchestrator_TablesUpdated;
                 _orchestrator.StatusUpdated += Orchestrator_StatusUpdated;
@@ -619,6 +637,7 @@ namespace DBSyncTool
             await ExecuteOperationAsync(async () =>
             {
                 SaveConfigurationFromUI();
+                UnsubscribeOrchestratorEvents();
                 _orchestrator = new CopyOrchestrator(_currentConfig, Log);
                 _orchestrator.TablesUpdated += Orchestrator_TablesUpdated;
                 _orchestrator.StatusUpdated += Orchestrator_StatusUpdated;
@@ -1053,6 +1072,16 @@ namespace DBSyncTool
             aboutForm.AcceptButton = btnOK;
 
             aboutForm.ShowDialog(this);
+        }
+
+        private void UnsubscribeOrchestratorEvents()
+        {
+            if (_orchestrator != null)
+            {
+                _orchestrator.TablesUpdated -= Orchestrator_TablesUpdated;
+                _orchestrator.StatusUpdated -= Orchestrator_StatusUpdated;
+                _orchestrator.TimestampsUpdated -= Orchestrator_TimestampsUpdated;
+            }
         }
 
         private void Orchestrator_TablesUpdated(object? sender, List<TableInfo> tables)

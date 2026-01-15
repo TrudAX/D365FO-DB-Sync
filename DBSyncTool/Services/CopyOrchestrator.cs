@@ -691,6 +691,7 @@ namespace DBSyncTool.Services
             }
 
             table.CachedData = null;
+            table.ControlData = null;  // Free memory after successful operation
             table.Status = TableStatus.Inserted;
 
             _logger($"[{table.TableName}] Completed (TRUNCATE mode)");
@@ -787,36 +788,40 @@ namespace DBSyncTool.Services
 
                     if (rowsToInsert.Count > 0)
                     {
-                        DataTable filteredData = tier2Data.Clone();
-                        foreach (var row in rowsToInsert)
+                        using (DataTable filteredData = tier2Data.Clone())
                         {
-                            filteredData.ImportRow(row);
-                        }
-
-                        // Step 2.4: Bulk insert
-                        var insertStopwatch = Stopwatch.StartNew();
-                        using (var bulkCopy = new SqlBulkCopy(connection, SqlBulkCopyOptions.Default, transaction))
-                        {
-                            bulkCopy.DestinationTableName = table.TableName;
-                            bulkCopy.BatchSize = 10000;
-                            bulkCopy.BulkCopyTimeout = _config.AxDbConnection.CommandTimeout;
-
-                            foreach (DataColumn col in filteredData.Columns)
+                            foreach (var row in rowsToInsert)
                             {
-                                bulkCopy.ColumnMappings.Add(col.ColumnName, col.ColumnName);
+                                filteredData.ImportRow(row);
                             }
 
-                            await bulkCopy.WriteToServerAsync(filteredData, cancellationToken);
-                        }
+                            // Step 2.4: Bulk insert
+                            var insertStopwatch = Stopwatch.StartNew();
+                            using (var bulkCopy = new SqlBulkCopy(connection, SqlBulkCopyOptions.Default, transaction))
+                            {
+                                bulkCopy.DestinationTableName = table.TableName;
+                                bulkCopy.BatchSize = 10000;
+                                bulkCopy.BulkCopyTimeout = _config.AxDbConnection.CommandTimeout;
 
-                        table.InsertTimeSeconds = (decimal)insertStopwatch.Elapsed.TotalSeconds;
-                        table.RecordsFetched = filteredData.Rows.Count;
-                        _logger($"[{table.TableName}] Inserted {filteredData.Rows.Count} records");
+                                foreach (DataColumn col in filteredData.Columns)
+                                {
+                                    bulkCopy.ColumnMappings.Add(col.ColumnName, col.ColumnName);
+                                }
+
+                                await bulkCopy.WriteToServerAsync(filteredData, cancellationToken);
+                            }
+
+                            table.InsertTimeSeconds = (decimal)insertStopwatch.Elapsed.TotalSeconds;
+                            table.RecordsFetched = filteredData.Rows.Count;
+                            _logger($"[{table.TableName}] Inserted {filteredData.Rows.Count} records");
+                        }
                     }
                     else
                     {
                         table.InsertTimeSeconds = 0;
                     }
+
+                    tier2Data.Dispose();  // Free memory after use
                 }
 
                 // Enable triggers
@@ -839,6 +844,7 @@ namespace DBSyncTool.Services
                     OnTimestampsUpdated(); // Trigger auto-save to disk
                 }
 
+                table.ControlData = null;  // Free memory after successful operation
                 table.Status = TableStatus.Inserted;
                 _logger($"[{table.TableName}] Completed (INCREMENTAL mode)");
             }

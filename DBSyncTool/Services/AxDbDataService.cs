@@ -103,6 +103,8 @@ namespace DBSyncTool.Services
             using var connection = new SqlConnection(_connectionString);
             await connection.OpenAsync(cancellationToken);
 
+            DataTable? filteredDataToDispose = null;  // Track filtered DataTable for disposal - declared outside try for catch block access
+
             try
             {
                 _logger($"[AxDB] Starting insert for table {tableInfo.TableName} ({tableInfo.CachedData.Rows.Count} rows)");
@@ -178,7 +180,8 @@ namespace DBSyncTool.Services
                         var recIdsToInsert = new HashSet<long>(comparison.ModifiedRecIds);
                         recIdsToInsert.UnionWith(comparison.NewRecIds);
 
-                        dataToInsert = FilterDataTableByRecIds(tableInfo.CachedData, recIdsToInsert);
+                        filteredDataToDispose = FilterDataTableByRecIds(tableInfo.CachedData, recIdsToInsert);
+                        dataToInsert = filteredDataToDispose;
 
                         _logger($"[AxDB] {tableInfo.TableName}: Will delete {recIdsToDelete.Count:N0}, insert {dataToInsert.Rows.Count:N0}");
                     }
@@ -257,7 +260,12 @@ namespace DBSyncTool.Services
                 // Step 5: Update sequence
                 await UpdateSequenceAsync(tableInfo, connection, null, cancellationToken);
 
-                return dataToInsert.Rows.Count;
+                int rowCount = dataToInsert.Rows.Count;
+
+                // Dispose filtered DataTable if we created one
+                filteredDataToDispose?.Dispose();
+
+                return rowCount;
             }
             catch
             {
@@ -270,6 +278,9 @@ namespace DBSyncTool.Services
                 {
                     // Ignore errors when re-enabling triggers
                 }
+
+                // Dispose filtered DataTable even on error
+                filteredDataToDispose?.Dispose();
 
                 throw;
             }
