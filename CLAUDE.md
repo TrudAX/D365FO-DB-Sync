@@ -382,6 +382,35 @@ Used for tables without SysRowVersion OR when optimization not available:
 - When `-truncate` is used, sequence is still updated to max RecId after insert
 - Timestamps auto-saved after each table (crash-safe persistence)
 
+## Recent Optimizations (v1.0.2026.15)
+
+**Memory Leak Fixes:**
+- Fixed CRITICAL memory leak: ControlData DataTable now cleared after each table completion
+- Fixed tier2Data/filteredData disposal in INCREMENTAL mode (wrapped in using statements)
+- Fixed event handler leaks: Unsubscribe orchestrator events when creating new instance
+- Fixed filtered DataTable leak in delta comparison (proper disposal even on errors)
+- Added FormClosing handler for cleanup on application exit
+- Impact: Prevents 10GB+ memory accumulation during large sync operations
+
+**INCREMENTAL Mode - Zero Change Optimization:**
+- When Tier2 changes = 0 AND AxDB changes = 0 AND Excess = 0:
+  - Perfect sync: Skip all operations (temp table, DELETEs, INSERTs)
+  - Has missing records: Skip DELETEs, only INSERT missing records
+- Performance: Tables with no changes process ~10x faster (1s → 0.1s)
+- Safety: Only optimizes when data is already in sync
+
+**Delta Comparison - TRUNCATE Optimization:**
+- After delta comparison, calculate change percentage: (Modified + New + Deleted) / Total × 100
+- If change % >= TruncateThresholdPercent (default 40%): Switch to TRUNCATE mode
+- Example: 60k records with 100% changed: DELETE 6.77s → TRUNCATE 0.01s (677x faster!)
+- Total time improvement: 10s → 3s (3x faster for high-change tables)
+- Automatically chooses optimal method (TRUNCATE for high changes, delta for low changes)
+
+**SQL Parameter Fix:**
+- Fixed "parameter '@Threshold' not supplied" error in INCREMENTAL mode
+- Added null checks for SysRowVersion timestamps in ControlData
+- Use minimum timestamp (0) as fallback when no valid timestamps exist
+
 ## Key Features
 
 **Get SQL Feature** (right-click context menu in MainForm)
