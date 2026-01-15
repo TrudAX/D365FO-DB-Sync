@@ -184,6 +184,31 @@ namespace DBSyncTool.Services
                         dataToInsert = filteredDataToDispose;
 
                         _logger($"[AxDB] {tableInfo.TableName}: Will delete {recIdsToDelete.Count:N0}, insert {dataToInsert.Rows.Count:N0}");
+
+                        // OPTIMIZATION: If too many changes, use TRUNCATE instead of delta DELETE
+                        // Calculate change percentage based on total fetched records
+                        long totalChanged = comparison.ModifiedRecIds.Count + comparison.NewRecIds.Count + comparison.DeletedRecIds.Count;
+                        double changePercent = tableInfo.CachedData.Rows.Count > 0
+                            ? (double)totalChanged / tableInfo.CachedData.Rows.Count * 100
+                            : 0;
+
+                        // Get truncate threshold from table (set by orchestrator from config)
+                        double truncateThreshold = tableInfo.TruncateThresholdPercent > 0
+                            ? tableInfo.TruncateThresholdPercent
+                            : 40.0; // Default fallback
+
+                        if (changePercent >= truncateThreshold)
+                        {
+                            _logger($"[AxDB] {tableInfo.TableName}: Change percentage {changePercent:F1}% >= threshold {truncateThreshold}%, switching to TRUNCATE mode");
+
+                            // Switch to full table mode - clear comparison flag and use all data
+                            shouldCompare = false;
+                            comparison = null;
+                            recIdsToDelete.Clear();
+                            dataToInsert = tableInfo.CachedData;  // Use full dataset
+                            filteredDataToDispose?.Dispose();  // Dispose filtered copy since we're not using it
+                            filteredDataToDispose = null;
+                        }
                     }
                 }
 

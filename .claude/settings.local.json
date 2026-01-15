@@ -20,7 +20,8 @@
       "Bash(git push)",
       "Bash(dotnet clean:*)",
       "Bash(gh release create:*)",
-      "Bash(git remote:*)"
+      "Bash(git remote:*)",
+      "Bash(= threshold Y%, switching to TRUNCATE mode\"\n\nSCENARIOS:\n- 100% changed: TRUNCATE \\(instant\\) + INSERT\n- 50% changed: TRUNCATE \\(instant\\) + INSERT\n- 30% changed: Delta DELETE + INSERT \\(more efficient\\)\n- 10% changed: Delta DELETE + INSERT \\(much more efficient\\)\n\nIMPACT:\nTables with high change percentage \\(>= 40%\\) will use TRUNCATE:\n- Deletes 60k records: 6.77s → 0.01s \\(677x faster!\\)\n- Total time: 10.05s → 3s \\(3x faster!\\)\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>\nEOF\n\\)\")"
     ],
     "deny": [],
     "ask": []

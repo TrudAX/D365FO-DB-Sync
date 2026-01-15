@@ -13,6 +13,7 @@ namespace DBSyncTool.Models
         public int? RecIdCount { get; set; }       // Explicit count or null for default
         public string SqlTemplate { get; set; } = string.Empty;  // For SQL strategy
         public bool UseTruncate { get; set; }    // -truncate flag
+        public double TruncateThresholdPercent { get; set; }  // From config, used in delta comparison optimization
 
         // Tier2 Info
         public long Tier2RowCount { get; set; }
