@@ -23,6 +23,7 @@ namespace DBSyncTool
             saveToolStripMenuItem = new ToolStripMenuItem();
             saveAsToolStripMenuItem = new ToolStripMenuItem();
             loadToolStripMenuItem = new ToolStripMenuItem();
+            openConfigFolderToolStripMenuItem = new ToolStripMenuItem();
             toolStripSeparator1 = new ToolStripSeparator();
             exitToolStripMenuItem = new ToolStripMenuItem();
             helpToolStripMenuItem = new ToolStripMenuItem();
@@ -156,6 +157,7 @@ namespace DBSyncTool
                 saveToolStripMenuItem,
                 saveAsToolStripMenuItem,
                 loadToolStripMenuItem,
+                openConfigFolderToolStripMenuItem,
                 toolStripSeparator1,
                 exitToolStripMenuItem
             });
@@ -179,6 +181,11 @@ namespace DBSyncTool
             loadToolStripMenuItem.Size = new Size(180, 22);
             loadToolStripMenuItem.Text = "&Load...";
             loadToolStripMenuItem.Click += BtnLoad_Click;
+
+            openConfigFolderToolStripMenuItem.Name = "openConfigFolderToolStripMenuItem";
+            openConfigFolderToolStripMenuItem.Size = new Size(180, 22);
+            openConfigFolderToolStripMenuItem.Text = "Open Config &Folder";
+            openConfigFolderToolStripMenuItem.Click += OpenConfigFolderToolStripMenuItem_Click;
 
             toolStripSeparator1.Name = "toolStripSeparator1";
             toolStripSeparator1.Size = new Size(177, 6);
@@ -218,6 +225,7 @@ namespace DBSyncTool
             lblConfig.Size = new Size(50, 15);
             lblConfig.Text = "Config:";
 
+            cmbConfig.DropDownStyle = ComboBoxStyle.DropDownList;
             cmbConfig.FormattingEnabled = true;
             cmbConfig.Location = new Point(68, 29);
             cmbConfig.Name = "cmbConfig";
@@ -751,6 +759,7 @@ namespace DBSyncTool
         private ToolStripMenuItem saveToolStripMenuItem;
         private ToolStripMenuItem saveAsToolStripMenuItem;
         private ToolStripMenuItem loadToolStripMenuItem;
+        private ToolStripMenuItem openConfigFolderToolStripMenuItem;
         private ToolStripSeparator toolStripSeparator1;
         private ToolStripMenuItem exitToolStripMenuItem;
         private ToolStripMenuItem helpToolStripMenuItem;

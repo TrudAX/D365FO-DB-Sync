@@ -874,6 +874,16 @@ namespace DBSyncTool
             Application.Exit();
         }
 
+        private void OpenConfigFolderToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            string configPath = Path.Combine(Application.StartupPath, "Config");
+            if (!Directory.Exists(configPath))
+            {
+                Directory.CreateDirectory(configPath);
+            }
+            System.Diagnostics.Process.Start("explorer.exe", configPath);
+        }
+
         private async void CheckForUpdatesToolStripMenuItem_Click(object sender, EventArgs e)
         {
             // Disable menu item during check
