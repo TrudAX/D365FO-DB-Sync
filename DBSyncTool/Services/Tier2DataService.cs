@@ -178,8 +178,8 @@ namespace DBSyncTool.Services
             var dataTable = new DataTable();
 
             await connection.OpenAsync(cancellationToken);
-            using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            dataTable.Load(reader);
+            using var adapter = new SqlDataAdapter(command);
+            adapter.Fill(dataTable);
 
             return dataTable;
         }
@@ -198,8 +198,8 @@ namespace DBSyncTool.Services
             var dataTable = new DataTable();
 
             await connection.OpenAsync(cancellationToken);
-            using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            dataTable.Load(reader);
+            using var adapter = new SqlDataAdapter(command);
+            adapter.Fill(dataTable);
 
             return dataTable;
         }
@@ -243,8 +243,8 @@ namespace DBSyncTool.Services
             var dataTable = new DataTable();
             await connection.OpenAsync(cancellationToken);
 
-            using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            dataTable.Load(reader);
+            using var adapter = new SqlDataAdapter(command);
+            adapter.Fill(dataTable);
 
             return dataTable;
         }
@@ -299,8 +299,8 @@ namespace DBSyncTool.Services
             var dataTable = new DataTable();
             await connection.OpenAsync(cancellationToken);
 
-            using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            dataTable.Load(reader);
+            using var adapter = new SqlDataAdapter(command);
+            adapter.Fill(dataTable);
 
             return dataTable;
         }
@@ -317,8 +317,8 @@ namespace DBSyncTool.Services
             var dataTable = new DataTable();
 
             await connection.OpenAsync(cancellationToken);
-            using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            dataTable.Load(reader);
+            using var adapter = new SqlDataAdapter(command);
+            adapter.Fill(dataTable);
 
             return dataTable;
         }
