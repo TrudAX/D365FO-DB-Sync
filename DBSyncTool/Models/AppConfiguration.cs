@@ -37,6 +37,9 @@ namespace DBSyncTool.Models
         // New threshold setting for SysRowVersion optimization
         public int TruncateThresholdPercent { get; set; } = 40;
 
+        // Force truncate mode for all tables
+        public bool TruncateAllTables { get; set; } = false;
+
         // New timestamp storage for SysRowVersion optimization
         public string Tier2Timestamps { get; set; } = "";  // Multiline: TableName,0xTimestamp
         public string AxDBTimestamps { get; set; } = "";   // Multiline: TableName,0xTimestamp

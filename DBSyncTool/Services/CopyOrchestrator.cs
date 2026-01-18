@@ -180,7 +180,7 @@ namespace DBSyncTool.Services
                         StrategyType = strategy.StrategyType,
                         RecIdCount = strategy.RecIdCount,
                         SqlTemplate = strategy.SqlTemplate,
-                        UseTruncate = strategy.UseTruncate,
+                        UseTruncate = strategy.UseTruncate || _config.TruncateAllTables,
                         Tier2RowCount = rowCount,
                         Tier2SizeGB = sizeGB,
                         BytesPerRow = bytesPerRow,
@@ -443,7 +443,7 @@ namespace DBSyncTool.Services
             table.StrategyType = strategy.StrategyType;
             table.RecIdCount = strategy.RecIdCount;
             table.SqlTemplate = strategy.SqlTemplate;
-            table.UseTruncate = strategy.UseTruncate;
+            table.UseTruncate = strategy.UseTruncate || _config.TruncateAllTables;
             table.RecordsToCopy = recordsToCopy;
             table.EstimatedSizeMB = estimatedSizeMB;
             table.FetchSql = fetchSql;

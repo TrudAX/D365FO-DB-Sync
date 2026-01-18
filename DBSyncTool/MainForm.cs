@@ -300,6 +300,7 @@ namespace DBSyncTool
             txtTablesToExclude.Text = _currentConfig.TablesToExclude;
             txtFieldsToExclude.Text = _currentConfig.FieldsToExclude;
             nudDefaultRecordCount.Value = _currentConfig.DefaultRecordCount;
+            chkTruncateAll.Checked = _currentConfig.TruncateAllTables;
             txtStrategyOverrides.Text = _currentConfig.StrategyOverrides;
 
             UpdateConnectionTabTitle();
@@ -338,6 +339,7 @@ namespace DBSyncTool
             _currentConfig.TablesToExclude = txtTablesToExclude.Text;
             _currentConfig.FieldsToExclude = txtFieldsToExclude.Text;
             _currentConfig.DefaultRecordCount = (int)nudDefaultRecordCount.Value;
+            _currentConfig.TruncateAllTables = chkTruncateAll.Checked;
             _currentConfig.StrategyOverrides = txtStrategyOverrides.Text;
         }
 

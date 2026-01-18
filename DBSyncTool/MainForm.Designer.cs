@@ -56,6 +56,7 @@ namespace DBSyncTool
             grpCol4 = new GroupBox();
             lblDefaultRecordCount = new Label();
             nudDefaultRecordCount = new NumericUpDown();
+            chkTruncateAll = new CheckBox();
             lblFieldsToExclude = new Label();
             txtFieldsToExclude = new TextBox();
 
@@ -348,6 +349,7 @@ namespace DBSyncTool
             // Column 4: Default Records & Fields to Exclude
             grpCol4.Controls.Add(lblDefaultRecordCount);
             grpCol4.Controls.Add(nudDefaultRecordCount);
+            grpCol4.Controls.Add(chkTruncateAll);
             grpCol4.Controls.Add(lblFieldsToExclude);
             grpCol4.Controls.Add(txtFieldsToExclude);
             grpCol4.Location = new Point(1045, 10);
@@ -366,15 +368,22 @@ namespace DBSyncTool
             nudDefaultRecordCount.Size = new Size(100, 23);
             nudDefaultRecordCount.Value = 10000;
 
+            chkTruncateAll.AutoSize = true;
+            chkTruncateAll.Location = new Point(10, 55);
+            chkTruncateAll.Name = "chkTruncateAll";
+            chkTruncateAll.Text = "Force truncate mode";
+            ToolTip truncateTooltip = new ToolTip();
+            truncateTooltip.SetToolTip(chkTruncateAll, "When checked, truncates all target tables before inserting data");
+
             lblFieldsToExclude.AutoSize = true;
-            lblFieldsToExclude.Location = new Point(10, 60);
+            lblFieldsToExclude.Location = new Point(10, 85);
             lblFieldsToExclude.Text = "Fields to Exclude:";
 
-            txtFieldsToExclude.Location = new Point(10, 80);
+            txtFieldsToExclude.Location = new Point(10, 105);
             txtFieldsToExclude.Multiline = true;
             txtFieldsToExclude.Name = "txtFieldsToExclude";
             txtFieldsToExclude.ScrollBars = ScrollBars.Vertical;
-            txtFieldsToExclude.Size = new Size(315, 110);
+            txtFieldsToExclude.Size = new Size(315, 85);
 
             // Connection Tab
             tabConnection.Controls.Add(lblAlias);
@@ -792,6 +801,7 @@ namespace DBSyncTool
         private GroupBox grpCol4;
         private Label lblDefaultRecordCount;
         private NumericUpDown nudDefaultRecordCount;
+        private CheckBox chkTruncateAll;
         private Label lblFieldsToExclude;
         private TextBox txtFieldsToExclude;
 
