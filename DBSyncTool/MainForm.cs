@@ -305,6 +305,10 @@ namespace DBSyncTool
             chkTruncateAll.Checked = _currentConfig.TruncateAllTables;
             txtStrategyOverrides.Text = _currentConfig.StrategyOverrides;
 
+            // Post-Transfer SQL Scripts
+            txtPostTransferSql.Text = _currentConfig.PostTransferSqlScripts;
+            chkExecutePostTransferAuto.Checked = _currentConfig.ExecutePostTransferAuto;
+
             UpdateConnectionTabTitle();
 
             // Initialize system excluded tables if empty (new configuration)
@@ -344,6 +348,10 @@ namespace DBSyncTool
             _currentConfig.DefaultRecordCount = (int)nudDefaultRecordCount.Value;
             _currentConfig.TruncateAllTables = chkTruncateAll.Checked;
             _currentConfig.StrategyOverrides = txtStrategyOverrides.Text;
+
+            // Post-Transfer SQL Scripts
+            _currentConfig.PostTransferSqlScripts = txtPostTransferSql.Text;
+            _currentConfig.ExecutePostTransferAuto = chkExecutePostTransferAuto.Checked;
         }
 
         private void RefreshTimestampUI()
@@ -663,6 +671,58 @@ namespace DBSyncTool
         private void BtnClearLog_Click(object sender, EventArgs e)
         {
             txtLog.Clear();
+        }
+
+        private async void BtnExecutePostTransfer_Click(object? sender, EventArgs e)
+        {
+            if (string.IsNullOrWhiteSpace(txtPostTransferSql.Text))
+            {
+                MessageBox.Show("No SQL scripts to execute.", "Information",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            // Disable button during execution
+            btnExecutePostTransfer.Enabled = false;
+
+            try
+            {
+                await ExecutePostTransferScriptsAsync();
+            }
+            finally
+            {
+                btnExecutePostTransfer.Enabled = true;
+            }
+        }
+
+        /// <summary>
+        /// Executes post-transfer SQL scripts against AxDB.
+        /// </summary>
+        /// <returns>True if all scripts executed successfully, false otherwise</returns>
+        private async Task<bool> ExecutePostTransferScriptsAsync()
+        {
+            Log("═══════════════════════════════════════════════════════════════════");
+            Log("Starting post-transfer SQL script execution...");
+
+            var service = new Services.PostTransferSqlService(_currentConfig.AxDbConnection, Log);
+            var (success, error) = await service.ExecuteScriptsAsync(
+                txtPostTransferSql.Text,
+                CancellationToken.None);
+
+            if (success)
+            {
+                Log("Post-transfer SQL scripts completed successfully.");
+                Log("═══════════════════════════════════════════════════════════════════");
+                return true;
+            }
+            else
+            {
+                Log($"Post-transfer SQL script execution failed.");
+                Log("═══════════════════════════════════════════════════════════════════");
+                MessageBox.Show($"Post-transfer SQL script failed:\n\n{error}",
+                    "Post-Transfer Script Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return false;
+            }
         }
 
         private void BtnCopyToClipboard_Click(object sender, EventArgs e)
@@ -1168,6 +1228,21 @@ namespace DBSyncTool
 
                     // Clear memory from completed tables
                     _orchestrator.ClearCompletedTablesMemory();
+
+                    // Auto-execute post-transfer SQL scripts if enabled and all tables succeeded
+                    if (chkExecutePostTransferAuto.Checked &&
+                        !string.IsNullOrWhiteSpace(txtPostTransferSql.Text))
+                    {
+                        var tables = _orchestrator.GetTables();
+                        bool allSucceeded = tables.Count > 0 &&
+                            tables.All(t => t.Status == TableStatus.Inserted || t.Status == TableStatus.Excluded);
+
+                        if (allSucceeded)
+                        {
+                            Log("Auto-executing post-transfer SQL scripts...");
+                            await ExecutePostTransferScriptsAsync();
+                        }
+                    }
                 }
 
                 // Refresh timestamp UI (they may have been updated during processing)

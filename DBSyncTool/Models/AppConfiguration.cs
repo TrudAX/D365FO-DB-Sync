@@ -45,6 +45,12 @@ namespace DBSyncTool.Models
         public string Tier2Timestamps { get; set; } = "";  // Multiline: TableName,0xTimestamp
         public string AxDBTimestamps { get; set; } = "";   // Multiline: TableName,0xTimestamp
 
+        // Post-transfer SQL scripts to execute against AxDB
+        public string PostTransferSqlScripts { get; set; } = "";
+
+        // Whether to execute post-transfer scripts automatically after successful transfer
+        public bool ExecutePostTransferAuto { get; set; } = false;
+
         // Helper method to create a default configuration
         public static AppConfiguration CreateDefault()
         {

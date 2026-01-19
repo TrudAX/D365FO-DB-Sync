@@ -105,6 +105,13 @@ namespace DBSyncTool
             txtAxDBTimestamps = new TextBox();
             btnClearTimestamps = new Button();
 
+            // Post-Transfer SQL controls
+            lblPostTransferSql = new Label();
+            lblPostTransferSqlHelp = new Label();
+            txtPostTransferSql = new TextBox();
+            chkExecutePostTransferAuto = new CheckBox();
+            btnExecutePostTransfer = new Button();
+
             // Action buttons
             btnPrepareTableList = new Button();
             btnProcessTables = new Button();
@@ -424,6 +431,11 @@ namespace DBSyncTool
             tabConnection.Controls.Add(lblAxDBTimestamps);
             tabConnection.Controls.Add(txtAxDBTimestamps);
             tabConnection.Controls.Add(btnClearTimestamps);
+            tabConnection.Controls.Add(lblPostTransferSql);
+            tabConnection.Controls.Add(lblPostTransferSqlHelp);
+            tabConnection.Controls.Add(txtPostTransferSql);
+            tabConnection.Controls.Add(chkExecutePostTransferAuto);
+            tabConnection.Controls.Add(btnExecutePostTransfer);
             tabConnection.Location = new Point(4, 24);
             tabConnection.Name = "tabConnection";
             tabConnection.Padding = new Padding(3);
@@ -567,9 +579,9 @@ namespace DBSyncTool
             txtSystemExcludedTables.Size = new Size(400, 200);
             txtSystemExcludedTables.Font = new Font("Consolas", 9F);
 
-            btnInitSystemExcludedTables.Location = new Point(420, 250);
+            btnInitSystemExcludedTables.Location = new Point(200, 220);
             btnInitSystemExcludedTables.Name = "btnInitSystemExcludedTables";
-            btnInitSystemExcludedTables.Size = new Size(80, 30);
+            btnInitSystemExcludedTables.Size = new Size(50, 23);
             btnInitSystemExcludedTables.Text = "Init";
             btnInitSystemExcludedTables.Click += BtnInitSystemExcludedTables_Click;
 
@@ -625,6 +637,36 @@ namespace DBSyncTool
             btnClearTimestamps.Text = "Clear All";
             btnClearTimestamps.UseVisualStyleBackColor = true;
             btnClearTimestamps.Click += BtnClearTimestamps_Click;
+
+            // Post-Transfer SQL Scripts
+            lblPostTransferSql.AutoSize = true;
+            lblPostTransferSql.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+            lblPostTransferSql.Location = new Point(10, 490);
+            lblPostTransferSql.Text = "AxDB Post-Transfer SQL Scripts";
+
+            lblPostTransferSqlHelp.AutoSize = true;
+            lblPostTransferSqlHelp.ForeColor = Color.Gray;
+            lblPostTransferSqlHelp.Location = new Point(10, 515);
+            lblPostTransferSqlHelp.Text = "SQL commands (one per line). Lines starting with -- are comments and skipped.";
+
+            txtPostTransferSql.Location = new Point(10, 540);
+            txtPostTransferSql.Multiline = true;
+            txtPostTransferSql.Name = "txtPostTransferSql";
+            txtPostTransferSql.ScrollBars = ScrollBars.Vertical;
+            txtPostTransferSql.Size = new Size(500, 120);
+            txtPostTransferSql.Font = new Font("Consolas", 9F);
+
+            chkExecutePostTransferAuto.AutoSize = true;
+            chkExecutePostTransferAuto.Location = new Point(10, 670);
+            chkExecutePostTransferAuto.Name = "chkExecutePostTransferAuto";
+            chkExecutePostTransferAuto.Text = "Execute automatically after successful transfer";
+
+            btnExecutePostTransfer.Location = new Point(420, 665);
+            btnExecutePostTransfer.Name = "btnExecutePostTransfer";
+            btnExecutePostTransfer.Size = new Size(90, 30);
+            btnExecutePostTransfer.Text = "Execute";
+            btnExecutePostTransfer.UseVisualStyleBackColor = true;
+            btnExecutePostTransfer.Click += BtnExecutePostTransfer_Click;
 
             // Action Buttons (in Tables tab)
             btnPrepareTableList.Location = new Point(12, 250);
@@ -858,6 +900,13 @@ namespace DBSyncTool
         private Label lblAxDBTimestamps;
         private TextBox txtAxDBTimestamps;
         private Button btnClearTimestamps;
+
+        // Post-Transfer SQL controls
+        private Label lblPostTransferSql;
+        private Label lblPostTransferSqlHelp;
+        private TextBox txtPostTransferSql;
+        private CheckBox chkExecutePostTransferAuto;
+        private Button btnExecutePostTransfer;
 
         // Action Buttons
         private Button btnPrepareTableList;
