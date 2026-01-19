@@ -604,6 +604,8 @@ namespace DBSyncTool
             {
                 if (_orchestrator != null)
                 {
+                    // Save current configuration from UI to refresh Tier2 connection
+                    SaveConfigurationFromUI();
                     await _orchestrator.RetryFailedAsync();
                 }
             });

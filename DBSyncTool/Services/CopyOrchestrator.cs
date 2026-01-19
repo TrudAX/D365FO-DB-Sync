@@ -10,7 +10,7 @@ namespace DBSyncTool.Services
     public class CopyOrchestrator
     {
         private readonly AppConfiguration _config;
-        private readonly Tier2DataService _tier2Service;
+        private Tier2DataService _tier2Service;
         private readonly AxDbDataService _axDbService;
         private readonly Action<string> _logger;
         private readonly TimestampManager _timestampManager;
@@ -338,6 +338,10 @@ namespace DBSyncTool.Services
             {
                 _logger("─────────────────────────────────────────────");
                 _logger("Starting Retry Failed...");
+
+                // Refresh Tier2 connection using the latest configuration before retrying
+                _logger("Refreshing Tier2 connection before retry");
+                _tier2Service = new Tier2DataService(_config.Tier2Connection, _logger);
 
                 var failedTables = _tables
                     .Where(t => t.Status == TableStatus.FetchError ||
