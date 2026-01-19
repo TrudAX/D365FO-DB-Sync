@@ -1314,6 +1314,111 @@ namespace DBSyncTool
             }
         }
 
+        private void BtnParseTier2ConnString_Click(object sender, EventArgs e)
+        {
+            // Prompt user for connection string
+            using var form = new Form
+            {
+                Text = "Parse Connection String",
+                Width = 700,
+                Height = 310,
+                StartPosition = FormStartPosition.CenterParent,
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                MaximizeBox = false,
+                MinimizeBox = false
+            };
+
+            var label = new Label
+            {
+                Text = "Paste Tier2 connection string (supports two formats):\n" +
+                       "Format 1: Server=myserver.database.windows.net;Database=mydb;User Id=myuser;Password=mypass\n" +
+                       "Format 2 (three lines from LCS):\n" +
+                       "  myserver.database.windows.net\\mydb\n" +
+                       "  myuser\n" +
+                       "  mypass",
+                Left = 20,
+                Top = 10,
+                Width = 640,
+                Height = 110,
+                AutoSize = false
+            };
+
+            var textBox = new TextBox
+            {
+                Left = 20,
+                Top = 125,
+                Width = 640,
+                Height = 80,
+                Multiline = true,
+                ScrollBars = ScrollBars.Vertical,
+                WordWrap = true
+            };
+
+            var btnOK = new Button
+            {
+                Text = "Parse",
+                Left = 480,
+                Top = 215,
+                DialogResult = DialogResult.OK
+            };
+
+            var btnCancel = new Button
+            {
+                Text = "Cancel",
+                Left = 565,
+                Top = 215,
+                DialogResult = DialogResult.Cancel
+            };
+
+            form.Controls.Add(label);
+            form.Controls.Add(textBox);
+            form.Controls.Add(btnOK);
+            form.Controls.Add(btnCancel);
+            form.AcceptButton = btnOK;
+            form.CancelButton = btnCancel;
+
+            if (form.ShowDialog() == DialogResult.OK)
+            {
+                string connectionString = textBox.Text?.Trim() ?? string.Empty;
+
+                if (string.IsNullOrWhiteSpace(connectionString))
+                {
+                    MessageBox.Show("Connection string cannot be empty.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
+
+                try
+                {
+                    var parsedData = ConnectionStringHelper.ParseConnectionString(connectionString);
+
+                    if (parsedData.ContainsKey("Server") && parsedData.ContainsKey("Database"))
+                    {
+                        txtTier2ServerDb.Text = ConnectionStringHelper.FormatServerDatabase(
+                            parsedData["Server"], 
+                            parsedData["Database"]);
+                    }
+
+                    if (parsedData.ContainsKey("User Id"))
+                    {
+                        txtTier2Username.Text = parsedData["User Id"];
+                    }
+
+                    if (parsedData.ContainsKey("Password"))
+                    {
+                        txtTier2Password.Text = parsedData["Password"];
+                    }
+
+                    Log("Tier2 connection string parsed successfully");
+                    MessageBox.Show("Connection string parsed successfully!", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Error parsing connection string: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    Log($"ERROR parsing connection string: {ex.Message}");
+                }
+            }
+        }
+
         private string? PromptForConfigName(string prompt, string defaultValue)
         {
             using var form = new Form
