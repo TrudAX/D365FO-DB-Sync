@@ -1321,7 +1321,7 @@ namespace DBSyncTool
             {
                 Text = "Parse Connection String",
                 Width = 700,
-                Height = 280,
+                Height = 310,
                 StartPosition = FormStartPosition.CenterParent,
                 FormBorderStyle = FormBorderStyle.FixedDialog,
                 MaximizeBox = false,
@@ -1339,14 +1339,14 @@ namespace DBSyncTool
                 Left = 20,
                 Top = 10,
                 Width = 640,
-                Height = 80,
+                Height = 110,
                 AutoSize = false
             };
 
             var textBox = new TextBox
             {
                 Left = 20,
-                Top = 95,
+                Top = 125,
                 Width = 640,
                 Height = 80,
                 Multiline = true,
@@ -1358,7 +1358,7 @@ namespace DBSyncTool
             {
                 Text = "Parse",
                 Left = 480,
-                Top = 185,
+                Top = 215,
                 DialogResult = DialogResult.OK
             };
 
@@ -1366,7 +1366,7 @@ namespace DBSyncTool
             {
                 Text = "Cancel",
                 Left = 565,
-                Top = 185,
+                Top = 215,
                 DialogResult = DialogResult.Cancel
             };
 
