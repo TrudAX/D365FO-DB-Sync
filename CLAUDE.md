@@ -25,6 +25,23 @@ dotnet run --project DBSyncTool/DBSyncTool.csproj
 
 Version format: `1.0.YYYY.DayOfYear` (auto-increments with each build using MSBuild properties)
 
+## Creating Releases
+
+When creating a GitHub release, ALWAYS include the compiled binary:
+
+```bash
+# Build release binary
+dotnet publish DBSyncTool/DBSyncTool.csproj -c Release -o ./publish --self-contained false
+
+# Create zip archive
+powershell -Command "Compress-Archive -Path './publish/*' -DestinationPath './DBSyncTool-vX.X.XXXX.XX.zip' -Force"
+
+# Create release with binary attached
+gh release create vX.X.XXXX.XX --title "vX.X.XXXX.XX" --notes "Release notes here" ./DBSyncTool-vX.X.XXXX.XX.zip
+```
+
+**Important:** Every release MUST include the `DBSyncTool-vX.X.XXXX.XX.zip` binary attachment so users can download and run the tool without building from source.
+
 ## Usage
 
 ### Step 1: Save Current AxDB
