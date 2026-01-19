@@ -1268,20 +1268,21 @@ namespace DBSyncTool
         {
             string defaultSystemExclusions = string.Join("\r\n", new[]
             {
-                "SQL*",
-                "UserInfo",
-                "Sys*",
-                "Batch*",
-                "RetailCDX*",
-                "RETAILHARDWAREPROFILE",
                 "AIFCHANGETRACKINGDELETEDOBJECT",
-                "LICENSINGUSEREFFECTIVEROLES",
-                "TIMEZONEINFO",
-                "FORMRUN*",
+                "AxKPI*",
+                "Batch*",
                 "BUSINESSEVENTSTABLE",
                 "FORMCONTROL*",
-                "VENDACCOUNTNUMOBJECTREFERENCES",
-                "AxKPI*"
+                "FORMRUN*",
+                "LICENSINGUSEREFFECTIVEROLES",
+                "RetailCDX*",
+                "RETAILHARDWAREPROFILE",
+                "SQL*",
+                "Sys*",
+                "SYSTEMPARAMETERS",
+                "TIMEZONEINFO",
+                "UserInfo",
+                "VENDACCOUNTNUMOBJECTREFERENCES"
             });
 
             txtSystemExcludedTables.Text = defaultSystemExclusions;

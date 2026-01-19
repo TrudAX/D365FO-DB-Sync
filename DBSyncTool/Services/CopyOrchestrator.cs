@@ -1221,8 +1221,8 @@ namespace DBSyncTool.Services
 
                 if (table.Status == TableStatus.Inserted || table.Status == TableStatus.Excluded)
                 {
-                    // Also clear metadata for completed tables
-                    table.CopyableFields.Clear();
+                    // Clear SQL strings for completed tables, but keep CopyableFields
+                    // (needed for "Process Selected" retry - field list is small memory footprint)
                     table.FetchSql = string.Empty;
                     table.SqlTemplate = string.Empty;
                     clearedCompleted++;
