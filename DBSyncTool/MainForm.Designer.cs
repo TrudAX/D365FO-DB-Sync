@@ -67,6 +67,7 @@ namespace DBSyncTool
             lblTier2 = new Label();
             lblTier2ServerDb = new Label();
             txtTier2ServerDb = new TextBox();
+            btnParseTier2ConnString = new Button();
             lblTier2Username = new Label();
             txtTier2Username = new TextBox();
             lblTier2Password = new Label();
@@ -399,6 +400,7 @@ namespace DBSyncTool
             tabConnection.Controls.Add(lblTier2);
             tabConnection.Controls.Add(lblTier2ServerDb);
             tabConnection.Controls.Add(txtTier2ServerDb);
+            tabConnection.Controls.Add(btnParseTier2ConnString);
             tabConnection.Controls.Add(lblTier2Username);
             tabConnection.Controls.Add(txtTier2Username);
             tabConnection.Controls.Add(lblTier2Password);
@@ -467,6 +469,16 @@ namespace DBSyncTool
             txtTier2ServerDb.Location = new Point(160, 67);
             txtTier2ServerDb.Name = "txtTier2ServerDb";
             txtTier2ServerDb.Size = new Size(600, 23);
+
+            // Parse Connection String button (paste icon)
+            btnParseTier2ConnString.Location = new Point(765, 67);
+            btnParseTier2ConnString.Name = "btnParseTier2ConnString";
+            btnParseTier2ConnString.Size = new Size(30, 23);
+            btnParseTier2ConnString.Text = "📋";
+            btnParseTier2ConnString.UseVisualStyleBackColor = true;
+            btnParseTier2ConnString.Click += BtnParseTier2ConnString_Click;
+            ToolTip parseTier2Tooltip = new ToolTip();
+            parseTier2Tooltip.SetToolTip(btnParseTier2ConnString, "Paste connection string");
 
             lblTier2Username.AutoSize = true;
             lblTier2Username.Location = new Point(10, 100);
@@ -863,6 +875,7 @@ namespace DBSyncTool
         private Label lblTier2;
         private Label lblTier2ServerDb;
         private TextBox txtTier2ServerDb;
+        private Button btnParseTier2ConnString;
         private Label lblTier2Username;
         private TextBox txtTier2Username;
         private Label lblTier2Password;
