@@ -296,6 +296,7 @@ namespace DBSyncTool
             nudTruncateThreshold.Value = _currentConfig.TruncateThresholdPercent;
             txtTier2Timestamps.Text = _currentConfig.Tier2Timestamps;
             txtAxDBTimestamps.Text = _currentConfig.AxDBTimestamps;
+            txtMaxTransferredRecIds.Text = _currentConfig.MaxTransferredRecIds;
 
             // Tables tab
             txtTablesToInclude.Text = _currentConfig.TablesToInclude;
@@ -341,6 +342,7 @@ namespace DBSyncTool
             _currentConfig.TruncateThresholdPercent = (int)nudTruncateThreshold.Value;
             _currentConfig.Tier2Timestamps = txtTier2Timestamps.Text;
             _currentConfig.AxDBTimestamps = txtAxDBTimestamps.Text;
+            _currentConfig.MaxTransferredRecIds = txtMaxTransferredRecIds.Text;
 
             _currentConfig.TablesToInclude = txtTablesToInclude.Text;
             _currentConfig.TablesToExclude = txtTablesToExclude.Text;
@@ -356,19 +358,21 @@ namespace DBSyncTool
 
         private void RefreshTimestampUI()
         {
-            // Update timestamp textboxes from config (they may have been updated by CopyOrchestrator)
+            // Update timestamp and MaxRecId textboxes from config (they may have been updated by CopyOrchestrator)
             if (InvokeRequired)
             {
                 Invoke(new Action(() =>
                 {
                     txtTier2Timestamps.Text = _currentConfig.Tier2Timestamps;
                     txtAxDBTimestamps.Text = _currentConfig.AxDBTimestamps;
+                    txtMaxTransferredRecIds.Text = _currentConfig.MaxTransferredRecIds;
                 }));
             }
             else
             {
                 txtTier2Timestamps.Text = _currentConfig.Tier2Timestamps;
                 txtAxDBTimestamps.Text = _currentConfig.AxDBTimestamps;
+                txtMaxTransferredRecIds.Text = _currentConfig.MaxTransferredRecIds;
             }
         }
 
@@ -590,6 +594,7 @@ namespace DBSyncTool
                 _orchestrator.TablesUpdated += Orchestrator_TablesUpdated;
                 _orchestrator.StatusUpdated += Orchestrator_StatusUpdated;
                 _orchestrator.TimestampsUpdated += Orchestrator_TimestampsUpdated;
+                _orchestrator.MaxRecIdsUpdated += Orchestrator_MaxRecIdsUpdated;
 
                 await _orchestrator.PrepareTableListAsync();
             });
@@ -657,6 +662,7 @@ namespace DBSyncTool
                 _orchestrator.TablesUpdated += Orchestrator_TablesUpdated;
                 _orchestrator.StatusUpdated += Orchestrator_StatusUpdated;
                 _orchestrator.TimestampsUpdated += Orchestrator_TimestampsUpdated;
+                _orchestrator.MaxRecIdsUpdated += Orchestrator_MaxRecIdsUpdated;
 
                 await _orchestrator.RunAllStagesAsync();
             });
@@ -1158,6 +1164,7 @@ namespace DBSyncTool
                 _orchestrator.TablesUpdated -= Orchestrator_TablesUpdated;
                 _orchestrator.StatusUpdated -= Orchestrator_StatusUpdated;
                 _orchestrator.TimestampsUpdated -= Orchestrator_TimestampsUpdated;
+                _orchestrator.MaxRecIdsUpdated -= Orchestrator_MaxRecIdsUpdated;
             }
         }
 
@@ -1177,6 +1184,26 @@ namespace DBSyncTool
             _timestampsUpdatedDuringExecution = true;
 
             // Save configuration immediately when timestamps are updated
+            if (!string.IsNullOrWhiteSpace(_currentConfig.ConfigName))
+            {
+                try
+                {
+                    _configManager.SaveConfiguration(_currentConfig);
+                    // Don't log here to avoid spamming - only log at the end in ExecuteOperationAsync
+                }
+                catch (Exception ex)
+                {
+                    Log($"Warning: Could not auto-save configuration: {ex.Message}");
+                }
+            }
+        }
+
+        private void Orchestrator_MaxRecIdsUpdated(object? sender, EventArgs e)
+        {
+            // Track that MaxRecIds were updated during this execution (uses same flag as timestamps)
+            _timestampsUpdatedDuringExecution = true;
+
+            // Save configuration immediately when MaxRecIds are updated
             if (!string.IsNullOrWhiteSpace(_currentConfig.ConfigName))
             {
                 try
@@ -1298,7 +1325,7 @@ namespace DBSyncTool
         private void BtnClearTimestamps_Click(object sender, EventArgs e)
         {
             var result = MessageBox.Show(
-                "This will clear all stored timestamps and disable optimization until the next successful sync.\n\n" +
+                "This will clear all stored timestamps and MaxRecIds, disabling optimization until the next successful sync.\n\n" +
                 "Are you sure you want to continue?",
                 "Clear Timestamps",
                 MessageBoxButtons.YesNo,
@@ -1308,9 +1335,11 @@ namespace DBSyncTool
             {
                 txtTier2Timestamps.Text = string.Empty;
                 txtAxDBTimestamps.Text = string.Empty;
+                txtMaxTransferredRecIds.Text = string.Empty;
                 _currentConfig.Tier2Timestamps = string.Empty;
                 _currentConfig.AxDBTimestamps = string.Empty;
-                Log("All timestamps cleared - optimization will be disabled until next successful sync");
+                _currentConfig.MaxTransferredRecIds = string.Empty;
+                Log("All timestamps and MaxRecIds cleared - optimization will be disabled until next successful sync");
             }
         }
 

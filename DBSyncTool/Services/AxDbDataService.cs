@@ -144,7 +144,7 @@ namespace DBSyncTool.Services
                             tableInfo.TableName, minRecId, context, connection, null, cancellationToken);
 
                         // Compare records
-                        comparison = CompareRecords(tableInfo.CachedData, axDbVersions, context);
+                        comparison = CompareRecords(tableInfo.CachedData, axDbVersions, context, tableInfo.StoredMaxRecId);
 
                         compareStopwatch.Stop();
                         tableInfo.CompareTimeSeconds = (decimal)compareStopwatch.Elapsed.TotalSeconds;
@@ -645,7 +645,8 @@ namespace DBSyncTool.Services
         private ComparisonResult CompareRecords(
             DataTable tier2Data,
             Dictionary<long, AxDbRecordVersion> axDbVersions,
-            ComparisonContext context)
+            ComparisonContext context,
+            long? maxTransferredRecId = null)
         {
             var result = new ComparisonResult();
             var tier2RecIds = new HashSet<long>();
@@ -676,9 +677,18 @@ namespace DBSyncTool.Services
                 // Get Tier2 values
                 int tier2RecVersion = Convert.ToInt32(row[recVersionCol]);
 
-                // Fallback mode: exclude RECVERSION=1 from optimization
+                // Fallback mode: RecVersion=1 optimization using MaxRecId
                 if (context.IsFallbackMode && tier2RecVersion == 1)
                 {
+                    // MaxRecId optimization: if both have RecVersion=1 AND RecId <= stored max
+                    if (axDbVersion.RecVersion == 1 &&
+                        maxTransferredRecId.HasValue &&
+                        recId <= maxTransferredRecId.Value)
+                    {
+                        result.UnchangedRecIds.Add(recId);
+                        continue;
+                    }
+                    // Otherwise treat as modified (existing behavior)
                     result.ModifiedRecIds.Add(recId);
                     continue;
                 }

@@ -105,6 +105,8 @@ namespace DBSyncTool
             lblAxDBTimestamps = new Label();
             txtAxDBTimestamps = new TextBox();
             btnClearTimestamps = new Button();
+            lblMaxTransferredRecIds = new Label();
+            txtMaxTransferredRecIds = new TextBox();
 
             // Post-Transfer SQL controls
             lblPostTransferSql = new Label();
@@ -433,6 +435,8 @@ namespace DBSyncTool
             tabConnection.Controls.Add(lblAxDBTimestamps);
             tabConnection.Controls.Add(txtAxDBTimestamps);
             tabConnection.Controls.Add(btnClearTimestamps);
+            tabConnection.Controls.Add(lblMaxTransferredRecIds);
+            tabConnection.Controls.Add(txtMaxTransferredRecIds);
             tabConnection.Controls.Add(lblPostTransferSql);
             tabConnection.Controls.Add(lblPostTransferSqlHelp);
             tabConnection.Controls.Add(txtPostTransferSql);
@@ -649,6 +653,18 @@ namespace DBSyncTool
             btnClearTimestamps.Text = "Clear All";
             btnClearTimestamps.UseVisualStyleBackColor = true;
             btnClearTimestamps.Click += BtnClearTimestamps_Click;
+
+            // MaxRecId Optimization (for fallback mode)
+            lblMaxTransferredRecIds.AutoSize = true;
+            lblMaxTransferredRecIds.Location = new Point(950, 285);
+            lblMaxTransferredRecIds.Text = "Max Transferred RecIds:";
+
+            txtMaxTransferredRecIds.Location = new Point(950, 310);
+            txtMaxTransferredRecIds.Multiline = true;
+            txtMaxTransferredRecIds.Name = "txtMaxTransferredRecIds";
+            txtMaxTransferredRecIds.ScrollBars = ScrollBars.Vertical;
+            txtMaxTransferredRecIds.Size = new Size(400, 315);
+            txtMaxTransferredRecIds.Font = new Font("Consolas", 8F);
 
             // Post-Transfer SQL Scripts
             lblPostTransferSql.AutoSize = true;
@@ -913,6 +929,8 @@ namespace DBSyncTool
         private Label lblAxDBTimestamps;
         private TextBox txtAxDBTimestamps;
         private Button btnClearTimestamps;
+        private Label lblMaxTransferredRecIds;
+        private TextBox txtMaxTransferredRecIds;
 
         // Post-Transfer SQL controls
         private Label lblPostTransferSql;

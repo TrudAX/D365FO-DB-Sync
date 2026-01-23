@@ -14,6 +14,7 @@ namespace DBSyncTool.Services
         private readonly AxDbDataService _axDbService;
         private readonly Action<string> _logger;
         private readonly TimestampManager _timestampManager;
+        private readonly MaxRecIdManager _maxRecIdManager;
 
         private List<TableInfo> _tables = new List<TableInfo>();
         private CancellationTokenSource? _cancellationTokenSource;
@@ -21,6 +22,7 @@ namespace DBSyncTool.Services
         public event EventHandler<List<TableInfo>>? TablesUpdated;
         public event EventHandler<string>? StatusUpdated;
         public event EventHandler? TimestampsUpdated;
+        public event EventHandler? MaxRecIdsUpdated;
 
         public CopyOrchestrator(AppConfiguration config, Action<string> logger)
         {
@@ -30,6 +32,8 @@ namespace DBSyncTool.Services
             _logger = logger;
             _timestampManager = new TimestampManager();
             _timestampManager.LoadFromConfig(config);
+            _maxRecIdManager = new MaxRecIdManager();
+            _maxRecIdManager.LoadFromConfig(config);
         }
 
         public List<TableInfo> GetTables() => _tables.ToList();
@@ -202,7 +206,8 @@ namespace DBSyncTool.Services
                         Status = TableStatus.Pending,
                         UseOptimizedMode = useOptimizedMode,
                         StoredTier2Timestamp = tier2Ts,
-                        StoredAxDBTimestamp = axdbTs
+                        StoredAxDBTimestamp = axdbTs,
+                        StoredMaxRecId = _maxRecIdManager.GetMaxRecId(tableName)
                     };
 
                     _tables.Add(tableInfo);
@@ -418,9 +423,10 @@ namespace DBSyncTool.Services
         /// </summary>
         private void ReapplyStrategyForTable(TableInfo table)
         {
-            // Reload timestamps from config (they may have been updated)
-            _logger($"[{table.TableName}] Reloading timestamps from config...");
+            // Reload timestamps and MaxRecIds from config (they may have been updated)
+            _logger($"[{table.TableName}] Reloading timestamps and MaxRecIds from config...");
             _timestampManager.LoadFromConfig(_config);
+            _maxRecIdManager.LoadFromConfig(_config);
 
             // Parse strategy overrides from current config
             var strategyOverrides = ParseStrategyOverrides(_config.StrategyOverrides);
@@ -468,6 +474,7 @@ namespace DBSyncTool.Services
             table.UseOptimizedMode = useOptimizedMode;
             table.StoredTier2Timestamp = tier2Ts;
             table.StoredAxDBTimestamp = axdbTs;
+            table.StoredMaxRecId = _maxRecIdManager.GetMaxRecId(table.TableName);
 
             _logger($"Re-applied strategy for {table.TableName}: {table.StrategyDisplay}");
             if (useOptimizedMode)
@@ -1070,7 +1077,8 @@ namespace DBSyncTool.Services
                 _logger($"Deleted {table.TableName}: {table.DeleteTimeSeconds:F2}s, Inserted: {table.InsertTimeSeconds:F2}s");
 
                 // Update timestamps if table has SysRowVersion (for future optimization)
-                if (table.CopyableFields.Any(f => f.Equals("SYSROWVERSION", StringComparison.OrdinalIgnoreCase)))
+                bool hasSysRowVersion = table.CopyableFields.Any(f => f.Equals("SYSROWVERSION", StringComparison.OrdinalIgnoreCase));
+                if (hasSysRowVersion)
                 {
                     try
                     {
@@ -1095,6 +1103,31 @@ namespace DBSyncTool.Services
                     catch (Exception ex)
                     {
                         _logger($"[{table.TableName}] Warning: Could not save timestamps: {ex.Message}");
+                    }
+                }
+                else
+                {
+                    // Save MaxRecId for tables WITHOUT SysRowVersion (fallback mode optimization)
+                    try
+                    {
+                        if (table.CachedData?.Rows.Count > 0)
+                        {
+                            long maxRecId = table.CachedData.AsEnumerable()
+                                .Where(r => r["RecId"] != DBNull.Value)
+                                .Max(r => Convert.ToInt64(r["RecId"]));
+
+                            if (maxRecId > 0)
+                            {
+                                _maxRecIdManager.SetMaxRecId(table.TableName, maxRecId);
+                                _maxRecIdManager.SaveToConfig(_config);
+                                OnMaxRecIdsUpdated();
+                                _logger($"[{table.TableName}] MaxRecId saved for fallback mode optimization: {maxRecId}");
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger($"[{table.TableName}] Warning: Could not save MaxRecId: {ex.Message}");
                     }
                 }
 
@@ -1545,6 +1578,11 @@ namespace DBSyncTool.Services
         private void OnTimestampsUpdated()
         {
             TimestampsUpdated?.Invoke(this, EventArgs.Empty);
+        }
+
+        private void OnMaxRecIdsUpdated()
+        {
+            MaxRecIdsUpdated?.Invoke(this, EventArgs.Empty);
         }
     }
 

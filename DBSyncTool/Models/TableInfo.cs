@@ -49,6 +49,9 @@ namespace DBSyncTool.Models
         public byte[]? StoredAxDBTimestamp { get; set; }
         public DataTable? ControlData { get; set; }  // RecId, SysRowVersion from Tier2
 
+        // MaxRecId Optimization for Fallback Mode (tables without SysRowVersion)
+        public long? StoredMaxRecId { get; set; }
+
         // Execution metrics for optimized mode
         public long Tier2ChangedCount { get; set; }
         public long AxDBChangedCount { get; set; }

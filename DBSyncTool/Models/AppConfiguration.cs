@@ -45,6 +45,9 @@ namespace DBSyncTool.Models
         public string Tier2Timestamps { get; set; } = "";  // Multiline: TableName,0xTimestamp
         public string AxDBTimestamps { get; set; } = "";   // Multiline: TableName,0xTimestamp
 
+        // MaxRecId storage for fallback mode optimization (tables without SysRowVersion)
+        public string MaxTransferredRecIds { get; set; } = "";  // Multiline: TABLENAME,MaxRecId
+
         // Post-transfer SQL scripts to execute against AxDB
         public string PostTransferSqlScripts { get; set; } = "";
 
