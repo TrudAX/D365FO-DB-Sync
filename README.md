@@ -158,8 +158,6 @@ You can configure SQL scripts to run automatically after a successful transfer. 
 DECLARE @path NVARCHAR(500) = N'J:\MSSQL_BACKUP\AxDB_' + FORMAT(GETDATE(), 'yyyy_MM_dd') + N'.bak'; BACKUP DATABASE [AxDB] TO DISK = @path WITH COPY_ONLY, NOFORMAT, INIT, NAME = N'AxDB Database Backup', SKIP, NOREWIND, NOUNLOAD, COMPRESSION, STATS = 10
 ```
 
-**Note:** Dynamic SQL expressions (like date formatting in file paths) must use variables or `EXEC()` - they cannot be used directly in statements like `BACKUP DATABASE ... TO DISK =`.
-
 ## Features
 
 ### Core Functionality
