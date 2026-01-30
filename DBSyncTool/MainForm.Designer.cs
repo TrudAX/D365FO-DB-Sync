@@ -393,7 +393,8 @@ namespace DBSyncTool
             txtFieldsToExclude.Location = new Point(10, 105);
             txtFieldsToExclude.Multiline = true;
             txtFieldsToExclude.Name = "txtFieldsToExclude";
-            txtFieldsToExclude.ScrollBars = ScrollBars.Vertical;
+            txtFieldsToExclude.ScrollBars = ScrollBars.Both;
+            txtFieldsToExclude.WordWrap = false;
             txtFieldsToExclude.Size = new Size(315, 85);
 
             // Connection Tab
@@ -591,7 +592,8 @@ namespace DBSyncTool
             txtSystemExcludedTables.Location = new Point(10, 250);
             txtSystemExcludedTables.Multiline = true;
             txtSystemExcludedTables.Name = "txtSystemExcludedTables";
-            txtSystemExcludedTables.ScrollBars = ScrollBars.Vertical;
+            txtSystemExcludedTables.ScrollBars = ScrollBars.Both;
+            txtSystemExcludedTables.WordWrap = false;
             txtSystemExcludedTables.Size = new Size(400, 200);
             txtSystemExcludedTables.Font = new Font("Consolas", 9F);
 
@@ -632,7 +634,8 @@ namespace DBSyncTool
             txtTier2Timestamps.Location = new Point(520, 310);
             txtTier2Timestamps.Multiline = true;
             txtTier2Timestamps.Name = "txtTier2Timestamps";
-            txtTier2Timestamps.ScrollBars = ScrollBars.Vertical;
+            txtTier2Timestamps.ScrollBars = ScrollBars.Both;
+            txtTier2Timestamps.WordWrap = false;
             txtTier2Timestamps.Size = new Size(400, 140);
             txtTier2Timestamps.Font = new Font("Consolas", 8F);
 
@@ -643,7 +646,8 @@ namespace DBSyncTool
             txtAxDBTimestamps.Location = new Point(520, 485);
             txtAxDBTimestamps.Multiline = true;
             txtAxDBTimestamps.Name = "txtAxDBTimestamps";
-            txtAxDBTimestamps.ScrollBars = ScrollBars.Vertical;
+            txtAxDBTimestamps.ScrollBars = ScrollBars.Both;
+            txtAxDBTimestamps.WordWrap = false;
             txtAxDBTimestamps.Size = new Size(400, 140);
             txtAxDBTimestamps.Font = new Font("Consolas", 8F);
 
@@ -662,7 +666,8 @@ namespace DBSyncTool
             txtMaxTransferredRecIds.Location = new Point(950, 310);
             txtMaxTransferredRecIds.Multiline = true;
             txtMaxTransferredRecIds.Name = "txtMaxTransferredRecIds";
-            txtMaxTransferredRecIds.ScrollBars = ScrollBars.Vertical;
+            txtMaxTransferredRecIds.ScrollBars = ScrollBars.Both;
+            txtMaxTransferredRecIds.WordWrap = false;
             txtMaxTransferredRecIds.Size = new Size(400, 315);
             txtMaxTransferredRecIds.Font = new Font("Consolas", 8F);
 
@@ -680,7 +685,8 @@ namespace DBSyncTool
             txtPostTransferSql.Location = new Point(10, 540);
             txtPostTransferSql.Multiline = true;
             txtPostTransferSql.Name = "txtPostTransferSql";
-            txtPostTransferSql.ScrollBars = ScrollBars.Vertical;
+            txtPostTransferSql.ScrollBars = ScrollBars.Both;
+            txtPostTransferSql.WordWrap = false;
             txtPostTransferSql.Size = new Size(500, 120);
             txtPostTransferSql.Font = new Font("Consolas", 9F);
 
@@ -794,7 +800,8 @@ namespace DBSyncTool
             txtLog.Multiline = true;
             txtLog.Name = "txtLog";
             txtLog.ReadOnly = true;
-            txtLog.ScrollBars = ScrollBars.Vertical;
+            txtLog.ScrollBars = ScrollBars.Both;
+            txtLog.WordWrap = false;
             txtLog.Size = new Size(1305, 115);
             txtLog.Font = new Font("Consolas", 9F);
             txtLog.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;

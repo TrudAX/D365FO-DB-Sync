@@ -1414,8 +1414,8 @@ namespace DBSyncTool
                 Width = 640,
                 Height = 80,
                 Multiline = true,
-                ScrollBars = ScrollBars.Vertical,
-                WordWrap = true
+                ScrollBars = ScrollBars.Both,
+                WordWrap = false
             };
 
             var btnOK = new Button
