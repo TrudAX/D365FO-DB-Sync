@@ -141,6 +141,25 @@ By default, the system matches the last X records between AxDB and Tier2. For so
 - Subsequent runs use INCREMENTAL mode optimization (much faster)
 - Tables are processed in parallel (default: 10 workers, configurable)
 
+### Step 7: Post-Transfer SQL Scripts (Optional)
+
+You can configure SQL scripts to run automatically after a successful transfer. This is useful for cleanup tasks or creating backups.
+
+1. Go to **Connection** tab
+2. Find **AxDB Post-Transfer SQL Scripts** section
+3. Enter SQL commands (one per line, lines starting with `--` are skipped as comments)
+4. Check **Execute automatically after successful transfer** to run on every sync
+5. Or click **Execute** button to run manually
+
+**Example:**
+```sql
+--truncate table DMFEntityDbSyncVersion
+--truncate table DMFDefinitionGroupExecutionBatchLink
+DECLARE @path NVARCHAR(500) = N'J:\MSSQL_BACKUP\AxDB_' + FORMAT(GETDATE(), 'yyyy_MM_dd') + N'.bak'; BACKUP DATABASE [AxDB] TO DISK = @path WITH COPY_ONLY, NOFORMAT, INIT, NAME = N'AxDB Database Backup', SKIP, NOREWIND, NOUNLOAD, COMPRESSION, STATS = 10
+```
+
+**Note:** Dynamic SQL expressions (like date formatting in file paths) must use variables or `EXEC()` - they cannot be used directly in statements like `BACKUP DATABASE ... TO DISK =`.
+
 ## Features
 
 ### Core Functionality
@@ -156,6 +175,7 @@ By default, the system matches the last X records between AxDB and Tier2. For so
 - **Smart Field Mapping**: Automatically maps common fields between source and destination
 - **Parallel Execution**: Configurable parallel workers (1-50) for concurrent table processing
 - **Delta Comparison**: Smart comparison using RECVERSION + datetime fields to skip unchanged records
+- **Post-Transfer SQL Scripts**: Run custom SQL commands after successful sync (e.g., cleanup, backups)
 
 ### Strategy Syntax
 
