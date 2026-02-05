@@ -606,7 +606,7 @@ namespace DBSyncTool
             chkShowExcludedTables.AutoSize = true;
             chkShowExcludedTables.Location = new Point(10, 455);
             chkShowExcludedTables.Name = "chkShowExcludedTables";
-            chkShowExcludedTables.Text = "Show excluded tables";
+            chkShowExcludedTables.Text = "Display excluded tables in main grid";
             ToolTip showExcludedTooltip = new ToolTip();
             showExcludedTooltip.SetToolTip(chkShowExcludedTables, "When checked, shows tables excluded by filters (with at least 1 record) in the table list with Status=Excluded");
 
