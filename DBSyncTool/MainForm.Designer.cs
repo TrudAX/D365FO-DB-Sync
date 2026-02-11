@@ -373,7 +373,7 @@ namespace DBSyncTool
             lblDefaultRecordCount.Text = "Records to copy:";
 
             nudDefaultRecordCount.Location = new Point(140, 23);
-            nudDefaultRecordCount.Maximum = int.MaxValue;
+            nudDefaultRecordCount.Maximum = 10000000;
             nudDefaultRecordCount.Minimum = 1;
             nudDefaultRecordCount.Name = "nudDefaultRecordCount";
             nudDefaultRecordCount.Size = new Size(100, 23);
