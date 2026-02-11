@@ -137,6 +137,16 @@ namespace DBSyncTool
 
             dgvTables.Columns.Add(new DataGridViewTextBoxColumn
             {
+                DataPropertyName = "CoverageDisplay",
+                HeaderText = "Coverage",
+                Name = "Coverage",
+                Width = 60,
+                DefaultCellStyle = new DataGridViewCellStyle { Alignment = DataGridViewContentAlignment.MiddleCenter },
+                SortMode = DataGridViewColumnSortMode.Automatic
+            });
+
+            dgvTables.Columns.Add(new DataGridViewTextBoxColumn
+            {
                 DataPropertyName = "Status",
                 HeaderText = "Status",
                 Name = "Status",
@@ -804,6 +814,7 @@ namespace DBSyncTool
                                 "EstimatedSizeMBDisplay" => table.EstimatedSizeMBDisplay,
                                 "Tier2RowCountDisplay" => table.Tier2RowCountDisplay,
                                 "Tier2SizeGBDisplay" => table.Tier2SizeGBDisplay,
+                                "CoverageDisplay" => table.CoverageDisplay,
                                 "Status" => table.Status.ToString(),
                                 "RecordsFetched" => table.RecordsFetched.ToString("N0"),
                                 "MinRecId" => table.MinRecId > 0 ? table.MinRecId.ToString("N0") : "",
@@ -913,9 +924,9 @@ namespace DBSyncTool
             // Sequence Update
             sql.AppendLine("-- === SEQUENCE UPDATE ===");
             sql.AppendLine($"DECLARE @MaxRecId BIGINT = (SELECT MAX(RECID) FROM [{table.TableName}])");
-            sql.AppendLine($"DECLARE @TableId INT = {table.TableId} -- Actual TableId from SQLDICTIONARY");
-            sql.AppendLine($"IF @MaxRecId > (SELECT CAST(current_value AS BIGINT) FROM sys.sequences WHERE name = 'SEQ_{table.TableId}')");
-            sql.AppendLine($"    ALTER SEQUENCE [SEQ_{table.TableId}] RESTART WITH @MaxRecId");
+            sql.AppendLine($"DECLARE @TableId INT = {table.AxDbTableId} -- AxDB TableId from SQLDICTIONARY");
+            sql.AppendLine($"IF @MaxRecId > (SELECT CAST(current_value AS BIGINT) FROM sys.sequences WHERE name = 'SEQ_{table.AxDbTableId}')");
+            sql.AppendLine($"    ALTER SEQUENCE [SEQ_{table.AxDbTableId}] RESTART WITH @MaxRecId");
 
             return sql.ToString();
         }
@@ -1618,6 +1629,11 @@ namespace DBSyncTool
                     sortedItems = direction == ListSortDirection.Ascending
                         ? items.OrderBy(x => x.Tier2SizeGB)
                         : items.OrderByDescending(x => x.Tier2SizeGB);
+                    break;
+                case "CoverageDisplay":
+                    sortedItems = direction == ListSortDirection.Ascending
+                        ? items.OrderBy(x => x.CoverageDisplay)
+                        : items.OrderByDescending(x => x.CoverageDisplay);
                     break;
                 case "Status":
                     sortedItems = direction == ListSortDirection.Ascending

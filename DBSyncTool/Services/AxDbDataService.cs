@@ -388,12 +388,15 @@ namespace DBSyncTool.Services
             var maxRecIdResult = await command1.ExecuteScalarAsync(cancellationToken);
 
             if (maxRecIdResult == null || maxRecIdResult == DBNull.Value)
+            {
+                _logger($"[AxDB] {tableInfo.TableName}: No records found, skipping sequence update");
                 return;
+            }
 
             long maxRecId = Convert.ToInt64(maxRecIdResult);
 
-            // Get current sequence value
-            string sequenceName = $"SEQ_{tableInfo.TableId}";
+            // Get current sequence value (use AxDB TableId for local sequences)
+            string sequenceName = $"SEQ_{tableInfo.AxDbTableId}";
             string currentSeqQuery = "SELECT CAST(current_value AS BIGINT) FROM sys.sequences WHERE name = @SequenceName";
 
             using var command2 = new SqlCommand(currentSeqQuery, connection, transaction);
@@ -402,7 +405,10 @@ namespace DBSyncTool.Services
             var currentSeqResult = await command2.ExecuteScalarAsync(cancellationToken);
 
             if (currentSeqResult == null || currentSeqResult == DBNull.Value)
+            {
+                _logger($"[AxDB] {tableInfo.TableName}: Sequence {sequenceName} not found in sys.sequences (AxDbTableId={tableInfo.AxDbTableId}), skipping sequence update");
                 return;
+            }
 
             long currentSeq = Convert.ToInt64(currentSeqResult);
 

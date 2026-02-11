@@ -373,7 +373,7 @@ namespace DBSyncTool
             lblDefaultRecordCount.Text = "Records to copy:";
 
             nudDefaultRecordCount.Location = new Point(140, 23);
-            nudDefaultRecordCount.Maximum = 1000000;
+            nudDefaultRecordCount.Maximum = int.MaxValue;
             nudDefaultRecordCount.Minimum = 1;
             nudDefaultRecordCount.Name = "nudDefaultRecordCount";
             nudDefaultRecordCount.Size = new Size(100, 23);
@@ -818,7 +818,9 @@ namespace DBSyncTool
             MinimumSize = new Size(1437, 650);
             Name = "MainForm";
             StartPosition = FormStartPosition.CenterScreen;
-            Text = "D365FO Database Sync Tool";
+            var _version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+            var _versionString = _version != null ? $"{_version.Major}.{_version.Minor}.{_version.Build}.{_version.Revision}" : "1.0.0.0";
+            Text = $"D365FO Database Sync Tool v{_versionString}";
             Icon = new Icon(Path.Combine(Application.StartupPath, "app.ico"));
 
             tabControl.ResumeLayout(false);

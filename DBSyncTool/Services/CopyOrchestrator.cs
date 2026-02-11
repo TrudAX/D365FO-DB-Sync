@@ -193,6 +193,7 @@ namespace DBSyncTool.Services
                     {
                         TableName = tableName,
                         TableId = tier2TableId.Value,
+                        AxDbTableId = axDbTableId.Value,
                         StrategyType = strategy.StrategyType,
                         RecIdCount = strategy.RecIdCount,
                         SqlTemplate = strategy.SqlTemplate,
@@ -1011,10 +1012,13 @@ namespace DBSyncTool.Services
             var maxRecIdResult = await cmd1.ExecuteScalarAsync(cancellationToken);
 
             if (maxRecIdResult == null || maxRecIdResult == DBNull.Value)
+            {
+                _logger($"[AxDB] {table.TableName}: No records found, skipping sequence update");
                 return;
+            }
 
             long maxRecId = Convert.ToInt64(maxRecIdResult);
-            string sequenceName = $"SEQ_{table.TableId}";
+            string sequenceName = $"SEQ_{table.AxDbTableId}";
 
             string currentSeqSql = "SELECT CAST(current_value AS BIGINT) FROM sys.sequences WHERE name = @SequenceName";
             using var cmd2 = new SqlCommand(currentSeqSql, connection, transaction);
@@ -1022,7 +1026,10 @@ namespace DBSyncTool.Services
             var currentSeqResult = await cmd2.ExecuteScalarAsync(cancellationToken);
 
             if (currentSeqResult == null || currentSeqResult == DBNull.Value)
+            {
+                _logger($"[AxDB] {table.TableName}: Sequence {sequenceName} not found in sys.sequences (AxDbTableId={table.AxDbTableId}), skipping sequence update");
                 return;
+            }
 
             long currentSeq = Convert.ToInt64(currentSeqResult);
             long newSeq = Math.Max(maxRecId, currentSeq) + 10;

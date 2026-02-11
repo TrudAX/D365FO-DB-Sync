@@ -6,7 +6,8 @@ namespace DBSyncTool.Models
     {
         // Identification
         public string TableName { get; set; } = string.Empty;
-        public int TableId { get; set; }
+        public int TableId { get; set; }        // Tier2 SQLDICTIONARY TableId
+        public int AxDbTableId { get; set; }    // AxDB SQLDICTIONARY TableId (used for sequence updates)
 
         // Strategy
         public CopyStrategyType StrategyType { get; set; }
@@ -84,6 +85,18 @@ namespace DBSyncTool.Models
                     parts.Add("TRUNC");
 
                 return string.Join(" ", parts);
+            }
+        }
+
+        public string CoverageDisplay
+        {
+            get
+            {
+                if (Status == TableStatus.Excluded)
+                    return "None";
+                if (StrategyType == CopyStrategyType.Sql)
+                    return "Partial";
+                return RecordsToCopy >= Tier2RowCount ? "Full" : "Partial";
             }
         }
 
