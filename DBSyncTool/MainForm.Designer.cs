@@ -818,9 +818,7 @@ namespace DBSyncTool
             MinimumSize = new Size(1437, 650);
             Name = "MainForm";
             StartPosition = FormStartPosition.CenterScreen;
-            var _version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
-            var _versionString = _version != null ? $"{_version.Major}.{_version.Minor}.{_version.Build}.{_version.Revision}" : "1.0.0.0";
-            Text = $"D365FO Database Sync Tool v{_versionString}";
+            Text = $"D365FO Database Sync Tool v{Application.ProductVersion}";
             Icon = new Icon(Path.Combine(Application.StartupPath, "app.ico"));
 
             tabControl.ResumeLayout(false);
