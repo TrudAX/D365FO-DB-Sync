@@ -11,8 +11,7 @@
     <ApplicationIcon>app.ico</ApplicationIcon>
 
     <!-- Version Information -->
-    <Version>1.0.$([System.DateTime]::Now.Year).$([System.DateTime]::Now.DayOfYear)</Version>
-    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <Version>1.0.0</Version>
     <AssemblyVersion>1.0.$([System.DateTime]::Now.Year).$([System.DateTime]::Now.DayOfYear)</AssemblyVersion>
     <FileVersion>1.0.$([System.DateTime]::Now.Year).$([System.DateTime]::Now.DayOfYear)</FileVersion>
     <Company>Denis Trunin</Company>
