@@ -327,25 +327,14 @@ namespace DBSyncTool.Services
                 !tableInfo.UseTruncate)
             {
                 _logger($"[AxDB] Optimization: Tier2 has {tableInfo.Tier2RowCount} rows, copying {tableInfo.RecordsToCopy} - using TRUNCATE instead of DELETE");
-
-                string truncateQuery = $"TRUNCATE TABLE [{tableInfo.TableName}]";
-                _logger($"[AxDB SQL] {truncateQuery}");
-
-                using var command = new SqlCommand(truncateQuery, connection, transaction);
-                command.CommandTimeout = _connectionSettings.CommandTimeout;
-                await command.ExecuteNonQueryAsync(cancellationToken);
+                await TruncateWithFallbackAsync(tableInfo.TableName, connection, transaction, cancellationToken);
                 return;
             }
 
             // If UseTruncate flag is set, always truncate
             if (tableInfo.UseTruncate)
             {
-                string truncateQuery = $"TRUNCATE TABLE [{tableInfo.TableName}]";
-                _logger($"[AxDB SQL] Truncating table: {truncateQuery}");
-
-                using var command = new SqlCommand(truncateQuery, connection, transaction);
-                command.CommandTimeout = _connectionSettings.CommandTimeout;
-                await command.ExecuteNonQueryAsync(cancellationToken);
+                await TruncateWithFallbackAsync(tableInfo.TableName, connection, transaction, cancellationToken);
                 return;
             }
 
@@ -360,6 +349,32 @@ namespace DBSyncTool.Services
 
                 default:
                     throw new Exception($"Unsupported strategy type: {tableInfo.StrategyType}");
+            }
+        }
+
+        /// <summary>
+        /// Attempts TRUNCATE TABLE, falls back to DELETE FROM if the table is referenced by views or foreign keys
+        /// </summary>
+        private async Task TruncateWithFallbackAsync(string tableName, SqlConnection connection, SqlTransaction? transaction, CancellationToken cancellationToken)
+        {
+            string truncateQuery = $"TRUNCATE TABLE [{tableName}]";
+            _logger($"[AxDB SQL] {truncateQuery}");
+
+            try
+            {
+                using var command = new SqlCommand(truncateQuery, connection, transaction);
+                command.CommandTimeout = _connectionSettings.CommandTimeout;
+                await command.ExecuteNonQueryAsync(cancellationToken);
+            }
+            catch (SqlException ex) when (ex.Message.Contains("Cannot TRUNCATE TABLE"))
+            {
+                _logger($"[AxDB] TRUNCATE failed for {tableName} (referenced by another object), falling back to DELETE");
+                string deleteQuery = $"DELETE FROM [{tableName}]";
+                _logger($"[AxDB SQL] {deleteQuery}");
+
+                using var deleteCommand = new SqlCommand(deleteQuery, connection, transaction);
+                deleteCommand.CommandTimeout = _connectionSettings.CommandTimeout;
+                await deleteCommand.ExecuteNonQueryAsync(cancellationToken);
             }
         }
 
