@@ -1369,6 +1369,15 @@ namespace DBSyncTool
             Log("System excluded tables initialized with default values");
         }
 
+        private void LnkMsDocumentation_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "https://learn.microsoft.com/en-us/dynamics365/fin-ops-core/dev-itpro/database/export-database#data-elements-that-arent-exported",
+                UseShellExecute = true
+            });
+        }
+
         private void BtnClearTimestamps_Click(object sender, EventArgs e)
         {
             var result = MessageBox.Show(

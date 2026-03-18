@@ -96,6 +96,7 @@ namespace DBSyncTool
             lblSystemExcludedTables = new Label();
             txtSystemExcludedTables = new TextBox();
             btnInitSystemExcludedTables = new Button();
+            lnkMsDocumentation = new LinkLabel();
             chkShowExcludedTables = new CheckBox();
 
             // Optimization settings
@@ -433,6 +434,7 @@ namespace DBSyncTool
             tabConnection.Controls.Add(lblSystemExcludedTables);
             tabConnection.Controls.Add(txtSystemExcludedTables);
             tabConnection.Controls.Add(btnInitSystemExcludedTables);
+            tabConnection.Controls.Add(lnkMsDocumentation);
             tabConnection.Controls.Add(chkShowExcludedTables);
             tabConnection.Controls.Add(lblFieldsToExclude);
             tabConnection.Controls.Add(txtFieldsToExclude);
@@ -597,6 +599,12 @@ namespace DBSyncTool
             btnInitSystemExcludedTables.Size = new Size(50, 23);
             btnInitSystemExcludedTables.Text = "Init";
             btnInitSystemExcludedTables.Click += BtnInitSystemExcludedTables_Click;
+
+            lnkMsDocumentation.AutoSize = true;
+            lnkMsDocumentation.Location = new Point(260, 223);
+            lnkMsDocumentation.Name = "lnkMsDocumentation";
+            lnkMsDocumentation.Text = "MS documentation";
+            lnkMsDocumentation.LinkClicked += LnkMsDocumentation_LinkClicked;
 
             chkShowExcludedTables.AutoSize = true;
             chkShowExcludedTables.Location = new Point(10, 515);
@@ -958,6 +966,7 @@ namespace DBSyncTool
         private Label lblSystemExcludedTables;
         private TextBox txtSystemExcludedTables;
         private Button btnInitSystemExcludedTables;
+        private LinkLabel lnkMsDocumentation;
         private CheckBox chkShowExcludedTables;
 
         // Optimization controls
