@@ -552,8 +552,9 @@ Used for tables without SysRowVersion OR when optimization not available:
 - Connection pool must accommodate parallel workers via connection string setting
 
 **UI-specific modifications:**
-- MainForm uses TabControl with two tabs: "Tables" (static) and "Connection-{Alias}" (dynamic)
+- MainForm uses TabControl with four tabs: "Tables" (static), "Connection-{Alias}" (dynamic), "Saved Values" (timestamps/RecIds), "Post-Transfer Actions" (SQL scripts)
 - DataGridView bound to `List<TableInfo>` via events from CopyOrchestrator
 - Context menu items: "Copy Table Name" and "Get SQL"
 - Error column truncates to 50 chars, full error in tooltip
 - Action buttons enabled/disabled based on execution state via event handlers
+- Fields to Exclude configured on Connection tab (next to System Excluded Tables)

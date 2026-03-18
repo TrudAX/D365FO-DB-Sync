@@ -39,6 +39,8 @@ namespace DBSyncTool
             tabControl = new TabControl();
             tabTables = new TabPage();
             tabConnection = new TabPage();
+            tabSavedRowValues = new TabPage();
+            tabPostTransfer = new TabPage();
 
             // Tables tab controls - 4 columns
             grpCol1 = new GroupBox();
@@ -141,6 +143,8 @@ namespace DBSyncTool
             tabControl.SuspendLayout();
             tabTables.SuspendLayout();
             tabConnection.SuspendLayout();
+            tabSavedRowValues.SuspendLayout();
+            tabPostTransfer.SuspendLayout();
             grpCol1.SuspendLayout();
             grpCol2.SuspendLayout();
             grpCol3.SuspendLayout();
@@ -247,6 +251,8 @@ namespace DBSyncTool
             // TabControl (fills form below config)
             tabControl.Controls.Add(tabTables);
             tabControl.Controls.Add(tabConnection);
+            tabControl.Controls.Add(tabSavedRowValues);
+            tabControl.Controls.Add(tabPostTransfer);
             tabControl.Location = new Point(0, 60);
             tabControl.Name = "tabControl";
             tabControl.SelectedIndex = 0;
@@ -357,15 +363,13 @@ namespace DBSyncTool
             txtStrategyOverrides.WordWrap = false;
             txtStrategyOverrides.Size = new Size(315, 145);
 
-            // Column 4: Default Records & Fields to Exclude
+            // Column 4: Default Records
             grpCol4.Controls.Add(lblDefaultRecordCount);
             grpCol4.Controls.Add(nudDefaultRecordCount);
             grpCol4.Controls.Add(chkTruncateAll);
-            grpCol4.Controls.Add(lblFieldsToExclude);
-            grpCol4.Controls.Add(txtFieldsToExclude);
             grpCol4.Location = new Point(1045, 10);
             grpCol4.Name = "grpCol4";
-            grpCol4.Size = new Size(335, 200);
+            grpCol4.Size = new Size(335, 100);
             grpCol4.Text = "Other Settings";
 
             lblDefaultRecordCount.AutoSize = true;
@@ -387,15 +391,17 @@ namespace DBSyncTool
             truncateTooltip.SetToolTip(chkTruncateAll, "When checked, truncates all target tables before inserting data");
 
             lblFieldsToExclude.AutoSize = true;
-            lblFieldsToExclude.Location = new Point(10, 85);
-            lblFieldsToExclude.Text = "Fields to Exclude:";
+            lblFieldsToExclude.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+            lblFieldsToExclude.Location = new Point(430, 225);
+            lblFieldsToExclude.Text = "Fields to Exclude";
 
-            txtFieldsToExclude.Location = new Point(10, 105);
+            txtFieldsToExclude.Location = new Point(430, 250);
             txtFieldsToExclude.Multiline = true;
             txtFieldsToExclude.Name = "txtFieldsToExclude";
             txtFieldsToExclude.ScrollBars = ScrollBars.Both;
             txtFieldsToExclude.WordWrap = false;
-            txtFieldsToExclude.Size = new Size(315, 85);
+            txtFieldsToExclude.Size = new Size(400, 260);
+            txtFieldsToExclude.Font = new Font("Consolas", 9F);
 
             // Connection Tab
             tabConnection.Controls.Add(lblAlias);
@@ -428,21 +434,10 @@ namespace DBSyncTool
             tabConnection.Controls.Add(txtSystemExcludedTables);
             tabConnection.Controls.Add(btnInitSystemExcludedTables);
             tabConnection.Controls.Add(chkShowExcludedTables);
-            tabConnection.Controls.Add(lblOptimization);
-            tabConnection.Controls.Add(lblTruncateThreshold);
-            tabConnection.Controls.Add(nudTruncateThreshold);
-            tabConnection.Controls.Add(lblTier2Timestamps);
-            tabConnection.Controls.Add(txtTier2Timestamps);
-            tabConnection.Controls.Add(lblAxDBTimestamps);
-            tabConnection.Controls.Add(txtAxDBTimestamps);
-            tabConnection.Controls.Add(btnClearTimestamps);
-            tabConnection.Controls.Add(lblMaxTransferredRecIds);
-            tabConnection.Controls.Add(txtMaxTransferredRecIds);
-            tabConnection.Controls.Add(lblPostTransferSql);
-            tabConnection.Controls.Add(lblPostTransferSqlHelp);
-            tabConnection.Controls.Add(txtPostTransferSql);
-            tabConnection.Controls.Add(chkExecutePostTransferAuto);
-            tabConnection.Controls.Add(btnExecutePostTransfer);
+            tabConnection.Controls.Add(lblFieldsToExclude);
+            tabConnection.Controls.Add(txtFieldsToExclude);
+            // Optimization controls moved to SavedRowValues tab
+            // Post-Transfer controls moved to Post-Transfer tab
             tabConnection.Location = new Point(4, 24);
             tabConnection.Name = "tabConnection";
             tabConnection.Padding = new Padding(3);
@@ -594,7 +589,7 @@ namespace DBSyncTool
             txtSystemExcludedTables.Name = "txtSystemExcludedTables";
             txtSystemExcludedTables.ScrollBars = ScrollBars.Both;
             txtSystemExcludedTables.WordWrap = false;
-            txtSystemExcludedTables.Size = new Size(400, 200);
+            txtSystemExcludedTables.Size = new Size(400, 260);
             txtSystemExcludedTables.Font = new Font("Consolas", 9F);
 
             btnInitSystemExcludedTables.Location = new Point(200, 220);
@@ -604,23 +599,41 @@ namespace DBSyncTool
             btnInitSystemExcludedTables.Click += BtnInitSystemExcludedTables_Click;
 
             chkShowExcludedTables.AutoSize = true;
-            chkShowExcludedTables.Location = new Point(10, 455);
+            chkShowExcludedTables.Location = new Point(10, 515);
             chkShowExcludedTables.Name = "chkShowExcludedTables";
             chkShowExcludedTables.Text = "Display excluded tables in main grid";
             ToolTip showExcludedTooltip = new ToolTip();
             showExcludedTooltip.SetToolTip(chkShowExcludedTables, "When checked, shows tables excluded by filters (with at least 1 record) in the table list with Status=Excluded");
 
+            // SavedRowValues Tab
+            tabSavedRowValues.Controls.Add(lblOptimization);
+            tabSavedRowValues.Controls.Add(lblTruncateThreshold);
+            tabSavedRowValues.Controls.Add(nudTruncateThreshold);
+            tabSavedRowValues.Controls.Add(lblTier2Timestamps);
+            tabSavedRowValues.Controls.Add(txtTier2Timestamps);
+            tabSavedRowValues.Controls.Add(lblAxDBTimestamps);
+            tabSavedRowValues.Controls.Add(txtAxDBTimestamps);
+            tabSavedRowValues.Controls.Add(btnClearTimestamps);
+            tabSavedRowValues.Controls.Add(lblMaxTransferredRecIds);
+            tabSavedRowValues.Controls.Add(txtMaxTransferredRecIds);
+            tabSavedRowValues.Location = new Point(4, 24);
+            tabSavedRowValues.Name = "tabSavedRowValues";
+            tabSavedRowValues.Padding = new Padding(3);
+            tabSavedRowValues.Size = new Size(1413, 804);
+            tabSavedRowValues.Text = "Saved Values";
+            tabSavedRowValues.UseVisualStyleBackColor = true;
+
             // SysRowVersion Optimization
             lblOptimization.AutoSize = true;
             lblOptimization.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
-            lblOptimization.Location = new Point(520, 225);
+            lblOptimization.Location = new Point(10, 15);
             lblOptimization.Text = "SysRowVersion Optimization";
 
             lblTruncateThreshold.AutoSize = true;
-            lblTruncateThreshold.Location = new Point(520, 250);
+            lblTruncateThreshold.Location = new Point(10, 45);
             lblTruncateThreshold.Text = "Truncate Threshold %:";
 
-            nudTruncateThreshold.Location = new Point(660, 248);
+            nudTruncateThreshold.Location = new Point(160, 43);
             nudTruncateThreshold.Maximum = 100;
             nudTruncateThreshold.Minimum = 1;
             nudTruncateThreshold.Name = "nudTruncateThreshold";
@@ -628,74 +641,88 @@ namespace DBSyncTool
             nudTruncateThreshold.Value = 40;
 
             lblTier2Timestamps.AutoSize = true;
-            lblTier2Timestamps.Location = new Point(520, 285);
+            lblTier2Timestamps.Location = new Point(10, 80);
             lblTier2Timestamps.Text = "Tier2 Timestamps:";
 
-            txtTier2Timestamps.Location = new Point(520, 310);
+            txtTier2Timestamps.Location = new Point(10, 100);
             txtTier2Timestamps.Multiline = true;
             txtTier2Timestamps.Name = "txtTier2Timestamps";
             txtTier2Timestamps.ScrollBars = ScrollBars.Both;
             txtTier2Timestamps.WordWrap = false;
-            txtTier2Timestamps.Size = new Size(400, 140);
+            txtTier2Timestamps.Size = new Size(450, 280);
             txtTier2Timestamps.Font = new Font("Consolas", 8F);
 
             lblAxDBTimestamps.AutoSize = true;
-            lblAxDBTimestamps.Location = new Point(520, 460);
+            lblAxDBTimestamps.Location = new Point(10, 390);
             lblAxDBTimestamps.Text = "AxDB Timestamps:";
 
-            txtAxDBTimestamps.Location = new Point(520, 485);
+            txtAxDBTimestamps.Location = new Point(10, 410);
             txtAxDBTimestamps.Multiline = true;
             txtAxDBTimestamps.Name = "txtAxDBTimestamps";
             txtAxDBTimestamps.ScrollBars = ScrollBars.Both;
             txtAxDBTimestamps.WordWrap = false;
-            txtAxDBTimestamps.Size = new Size(400, 140);
+            txtAxDBTimestamps.Size = new Size(450, 280);
             txtAxDBTimestamps.Font = new Font("Consolas", 8F);
 
-            btnClearTimestamps.Location = new Point(820, 635);
+            btnClearTimestamps.Location = new Point(10, 700);
             btnClearTimestamps.Name = "btnClearTimestamps";
             btnClearTimestamps.Size = new Size(100, 30);
             btnClearTimestamps.Text = "Clear All";
             btnClearTimestamps.UseVisualStyleBackColor = true;
             btnClearTimestamps.Click += BtnClearTimestamps_Click;
 
-            // MaxRecId Optimization (for fallback mode)
+            // Max Transferred RecIds
             lblMaxTransferredRecIds.AutoSize = true;
-            lblMaxTransferredRecIds.Location = new Point(950, 285);
-            lblMaxTransferredRecIds.Text = "Max Transferred RecIds:";
+            lblMaxTransferredRecIds.Location = new Point(500, 15);
+            lblMaxTransferredRecIds.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+            lblMaxTransferredRecIds.Text = "Max Transferred RecIds";
 
-            txtMaxTransferredRecIds.Location = new Point(950, 310);
+            txtMaxTransferredRecIds.Location = new Point(500, 40);
             txtMaxTransferredRecIds.Multiline = true;
             txtMaxTransferredRecIds.Name = "txtMaxTransferredRecIds";
             txtMaxTransferredRecIds.ScrollBars = ScrollBars.Both;
             txtMaxTransferredRecIds.WordWrap = false;
-            txtMaxTransferredRecIds.Size = new Size(400, 315);
+            txtMaxTransferredRecIds.Size = new Size(450, 690);
             txtMaxTransferredRecIds.Font = new Font("Consolas", 8F);
+
+            // Post-Transfer Tab
+            tabPostTransfer.Controls.Add(lblPostTransferSql);
+            tabPostTransfer.Controls.Add(lblPostTransferSqlHelp);
+            tabPostTransfer.Controls.Add(txtPostTransferSql);
+            tabPostTransfer.Controls.Add(chkExecutePostTransferAuto);
+            tabPostTransfer.Controls.Add(btnExecutePostTransfer);
+            tabPostTransfer.Location = new Point(4, 24);
+            tabPostTransfer.Name = "tabPostTransfer";
+            tabPostTransfer.Padding = new Padding(3);
+            tabPostTransfer.Size = new Size(1413, 804);
+            tabPostTransfer.Text = "Post-Transfer Actions";
+            tabPostTransfer.UseVisualStyleBackColor = true;
 
             // Post-Transfer SQL Scripts
             lblPostTransferSql.AutoSize = true;
             lblPostTransferSql.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
-            lblPostTransferSql.Location = new Point(10, 490);
+            lblPostTransferSql.Location = new Point(10, 15);
             lblPostTransferSql.Text = "AxDB Post-Transfer SQL Scripts";
 
             lblPostTransferSqlHelp.AutoSize = true;
             lblPostTransferSqlHelp.ForeColor = Color.Gray;
-            lblPostTransferSqlHelp.Location = new Point(10, 515);
+            lblPostTransferSqlHelp.Location = new Point(10, 40);
             lblPostTransferSqlHelp.Text = "SQL commands (one per line). Lines starting with -- are comments and skipped.";
 
-            txtPostTransferSql.Location = new Point(10, 540);
+            txtPostTransferSql.Location = new Point(10, 65);
             txtPostTransferSql.Multiline = true;
             txtPostTransferSql.Name = "txtPostTransferSql";
             txtPostTransferSql.ScrollBars = ScrollBars.Both;
             txtPostTransferSql.WordWrap = false;
-            txtPostTransferSql.Size = new Size(500, 120);
+            txtPostTransferSql.Size = new Size(700, 273);
             txtPostTransferSql.Font = new Font("Consolas", 9F);
 
             chkExecutePostTransferAuto.AutoSize = true;
-            chkExecutePostTransferAuto.Location = new Point(10, 670);
+            chkExecutePostTransferAuto.Location = new Point(10, 348);
             chkExecutePostTransferAuto.Name = "chkExecutePostTransferAuto";
             chkExecutePostTransferAuto.Text = "Execute automatically after successful transfer";
 
-            btnExecutePostTransfer.Location = new Point(420, 665);
+            btnExecutePostTransfer.Location = new Point(620, 343);
             btnExecutePostTransfer.Name = "btnExecutePostTransfer";
             btnExecutePostTransfer.Size = new Size(90, 30);
             btnExecutePostTransfer.Text = "Execute";
@@ -824,6 +851,10 @@ namespace DBSyncTool
             tabControl.ResumeLayout(false);
             tabTables.ResumeLayout(false);
             tabConnection.ResumeLayout(false);
+            tabSavedRowValues.ResumeLayout(false);
+            tabSavedRowValues.PerformLayout();
+            tabPostTransfer.ResumeLayout(false);
+            tabPostTransfer.PerformLayout();
             grpCol1.ResumeLayout(false);
             grpCol1.PerformLayout();
             grpCol2.ResumeLayout(false);
@@ -871,6 +902,8 @@ namespace DBSyncTool
         private TabControl tabControl;
         private TabPage tabTables;
         private TabPage tabConnection;
+        private TabPage tabSavedRowValues;
+        private TabPage tabPostTransfer;
 
         // Tables Tab - 4 columns
         private GroupBox grpCol1;
