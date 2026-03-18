@@ -31,7 +31,7 @@ namespace DBSyncTool.Services
         }
 
         /// <summary>
-        /// Executes BACKUP DATABASE command against AxDB.
+        /// Executes BACKUP DATABASE command against AxDB with real-time progress polling.
         /// </summary>
         public async Task<(bool Success, string? Error)> ExecuteBackupAsync(
             string pathPattern,
@@ -62,17 +62,31 @@ namespace DBSyncTool.Services
             _logger($"[Backup] Path: {resolvedPath}");
             _logger($"[Backup] Name: {backupName}");
 
+            var connectionString = _axDbSettings.BuildConnectionString(isAzure: false);
+
+            // CancellationTokenSource to stop progress polling when backup finishes or fails
+            using var pollingCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            var pollingToken = pollingCts.Token;
+
+            // Start progress polling on a separate connection
+            var pollingTask = PollBackupProgressAsync(connectionString, database, pollingToken);
+
             try
             {
-                var connectionString = _axDbSettings.BuildConnectionString(isAzure: false);
                 using var connection = new SqlConnection(connectionString);
+                await connection.OpenAsync(cancellationToken);
 
                 connection.InfoMessage += (sender, e) =>
                 {
-                    _logger($"[Backup] {e.Message}");
+                    foreach (var line in e.Message.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+                    {
+                        var trimmed = line.Trim();
+                        // Skip "X percent processed" lines - real-time polling handles progress
+                        if (string.IsNullOrEmpty(trimmed) || trimmed.Contains("percent processed"))
+                            continue;
+                        _logger($"[Backup] {trimmed}");
+                    }
                 };
-
-                await connection.OpenAsync(cancellationToken);
 
                 using var command = new SqlCommand(sql, connection);
                 command.CommandTimeout = 0; // Unlimited - backups can be large
@@ -80,19 +94,100 @@ namespace DBSyncTool.Services
 
                 await command.ExecuteNonQueryAsync(cancellationToken);
 
+                // Stop polling
+                pollingCts.Cancel();
+                await WaitForPollingToFinish(pollingTask);
+
                 _logger($"[Backup] Backup completed successfully: {resolvedPath}");
                 return (true, null);
             }
             catch (OperationCanceledException)
             {
+                pollingCts.Cancel();
+                await WaitForPollingToFinish(pollingTask);
+
                 _logger("[Backup] Backup cancelled.");
                 return (false, "Backup was cancelled.");
             }
             catch (Exception ex)
             {
+                pollingCts.Cancel();
+                await WaitForPollingToFinish(pollingTask);
+
                 string errorMsg = $"Backup failed: {ex.Message}";
                 _logger($"[Backup] ERROR: {errorMsg}");
                 return (false, errorMsg);
+            }
+        }
+
+        private static async Task WaitForPollingToFinish(Task pollingTask)
+        {
+            try { await pollingTask; }
+            catch (OperationCanceledException) { }
+        }
+
+        private async Task PollBackupProgressAsync(
+            string connectionString,
+            string database,
+            CancellationToken cancellationToken)
+        {
+            // Initial delay to let the backup command start
+            await Task.Delay(3000, cancellationToken);
+
+            // Use master database for DMV access; query filters by database name
+            var builder = new SqlConnectionStringBuilder(connectionString)
+            {
+                InitialCatalog = "master",
+                Pooling = false  // Separate connection, not from the pool
+            };
+            string masterConnStr = builder.ConnectionString;
+
+            string pollSql = @"
+                SELECT r.percent_complete, r.estimated_completion_time
+                FROM sys.dm_exec_requests r
+                WHERE r.command LIKE 'BACKUP%'
+                  AND r.database_id = DB_ID(@database)";
+
+            try
+            {
+                using var connection = new SqlConnection(masterConnStr);
+                await connection.OpenAsync(cancellationToken);
+
+                while (!cancellationToken.IsCancellationRequested)
+                {
+                    try
+                    {
+                        using var command = new SqlCommand(pollSql, connection);
+                        command.CommandTimeout = 5;
+                        command.Parameters.AddWithValue("@database", database);
+
+                        using var reader = await command.ExecuteReaderAsync(cancellationToken);
+                        if (await reader.ReadAsync(cancellationToken))
+                        {
+                            var percent = reader.GetFloat(0);
+                            var estMs = reader.GetInt64(1);
+                            var estTime = estMs > 0
+                                ? $", Est. remaining: {TimeSpan.FromMilliseconds(estMs):mm\\:ss}"
+                                : "";
+                            _logger($"[Backup] Progress: {percent:F0}%{estTime}");
+                        }
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception ex)
+                    {
+                        _logger($"[Backup] Progress poll error: {ex.Message}");
+                    }
+
+                    await Task.Delay(20000, cancellationToken);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Normal exit - backup finished or was cancelled
+            }
+            catch (Exception ex)
+            {
+                _logger($"[Backup] Progress monitor failed: {ex.Message}");
             }
         }
     }

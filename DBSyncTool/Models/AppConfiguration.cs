@@ -58,6 +58,9 @@ namespace DBSyncTool.Models
         public bool BackupDatabaseEnabled { get; set; } = false;
         public string BackupPathPattern { get; set; } = "";  // e.g. J:\MSSQL_BACKUP\AxDB_[yyyy_MM_dd_HHmm].bak
 
+        // Execute all post-transfer actions (SQL scripts, backup, any future actions)
+        public bool ExecutePostTransferActions { get; set; } = false;
+
         // Helper method to create a default configuration
         public static AppConfiguration CreateDefault()
         {

@@ -324,6 +324,7 @@ namespace DBSyncTool
             txtFieldsToExclude.Text = _currentConfig.FieldsToExclude;
             nudDefaultRecordCount.Value = _currentConfig.DefaultRecordCount;
             chkTruncateAll.Checked = _currentConfig.TruncateAllTables;
+            chkExecutePostTransferActions.Checked = _currentConfig.ExecutePostTransferActions;
             txtStrategyOverrides.Text = _currentConfig.StrategyOverrides;
 
             // Post-Transfer SQL Scripts
@@ -373,6 +374,7 @@ namespace DBSyncTool
             _currentConfig.FieldsToExclude = txtFieldsToExclude.Text;
             _currentConfig.DefaultRecordCount = (int)nudDefaultRecordCount.Value;
             _currentConfig.TruncateAllTables = chkTruncateAll.Checked;
+            _currentConfig.ExecutePostTransferActions = chkExecutePostTransferActions.Checked;
             _currentConfig.StrategyOverrides = txtStrategyOverrides.Text;
 
             // Post-Transfer SQL Scripts
@@ -745,6 +747,8 @@ namespace DBSyncTool
 
             try
             {
+                SaveConfigurationFromUI();
+                _configManager.SaveConfiguration(_currentConfig);
                 await ExecutePostTransferScriptsAsync();
             }
             finally
@@ -797,6 +801,7 @@ namespace DBSyncTool
             try
             {
                 SaveConfigurationFromUI();
+                _configManager.SaveConfiguration(_currentConfig);
                 await ExecuteBackupAsync();
             }
             finally
@@ -1342,6 +1347,11 @@ namespace DBSyncTool
             {
                 _isExecuting = true;
                 _timestampsUpdatedDuringExecution = false;  // Reset flag before execution
+
+                // Save config from UI before every operation
+                SaveConfigurationFromUI();
+                _configManager.SaveConfiguration(_currentConfig);
+
                 UpdateButtonStates();
                 _updateTimer.Start();
 
@@ -1370,23 +1380,26 @@ namespace DBSyncTool
                     bool allSucceeded = tables.Count > 0 &&
                         tables.All(t => t.Status == TableStatus.Inserted || t.Status == TableStatus.Excluded);
 
-                    // Auto-execute post-transfer SQL scripts if enabled and all tables succeeded
-                    bool postTransferSuccess = true;
-                    if (chkExecutePostTransferAuto.Checked &&
-                        !string.IsNullOrWhiteSpace(txtPostTransferSql.Text) &&
-                        allSucceeded)
+                    // Auto-execute post-transfer actions if master toggle is enabled
+                    if (chkExecutePostTransferActions.Checked && allSucceeded)
                     {
-                        Log("Auto-executing post-transfer SQL scripts...");
-                        postTransferSuccess = await ExecutePostTransferScriptsAsync();
-                    }
+                        // Auto-execute post-transfer SQL scripts if enabled
+                        bool postTransferSuccess = true;
+                        if (chkExecutePostTransferAuto.Checked &&
+                            !string.IsNullOrWhiteSpace(txtPostTransferSql.Text))
+                        {
+                            Log("Auto-executing post-transfer SQL scripts...");
+                            postTransferSuccess = await ExecutePostTransferScriptsAsync();
+                        }
 
-                    // Auto-execute backup if enabled and all tables succeeded and post-transfer scripts succeeded
-                    if (chkBackupDatabaseEnabled.Checked &&
-                        !string.IsNullOrWhiteSpace(txtBackupPath.Text) &&
-                        allSucceeded && postTransferSuccess)
-                    {
-                        Log("Auto-executing database backup...");
-                        await ExecuteBackupAsync();
+                        // Auto-execute backup if enabled and post-transfer scripts succeeded
+                        if (chkBackupDatabaseEnabled.Checked &&
+                            !string.IsNullOrWhiteSpace(txtBackupPath.Text) &&
+                            postTransferSuccess)
+                        {
+                            Log("Auto-executing database backup...");
+                            await ExecuteBackupAsync();
+                        }
                     }
                 }
 

@@ -59,6 +59,7 @@ namespace DBSyncTool
             lblDefaultRecordCount = new Label();
             nudDefaultRecordCount = new NumericUpDown();
             chkTruncateAll = new CheckBox();
+            chkExecutePostTransferActions = new CheckBox();
             lblFieldsToExclude = new Label();
             txtFieldsToExclude = new TextBox();
 
@@ -377,9 +378,10 @@ namespace DBSyncTool
             grpCol4.Controls.Add(lblDefaultRecordCount);
             grpCol4.Controls.Add(nudDefaultRecordCount);
             grpCol4.Controls.Add(chkTruncateAll);
+            grpCol4.Controls.Add(chkExecutePostTransferActions);
             grpCol4.Location = new Point(1045, 10);
             grpCol4.Name = "grpCol4";
-            grpCol4.Size = new Size(335, 100);
+            grpCol4.Size = new Size(335, 125);
             grpCol4.Text = "Other Settings";
 
             lblDefaultRecordCount.AutoSize = true;
@@ -399,6 +401,14 @@ namespace DBSyncTool
             chkTruncateAll.Text = "Force truncate mode";
             ToolTip truncateTooltip = new ToolTip();
             truncateTooltip.SetToolTip(chkTruncateAll, "When checked, truncates all target tables before inserting data");
+
+            chkExecutePostTransferActions.AutoSize = true;
+            chkExecutePostTransferActions.Location = new Point(10, 80);
+            chkExecutePostTransferActions.Name = "chkExecutePostTransferActions";
+            chkExecutePostTransferActions.Text = "Execute Post-Transfer Actions";
+            chkExecutePostTransferActions.Checked = false;
+            ToolTip postTransferActionsTooltip = new ToolTip();
+            postTransferActionsTooltip.SetToolTip(chkExecutePostTransferActions, "When checked, executes post-transfer actions (SQL scripts, backup) after successful table processing");
 
             lblFieldsToExclude.AutoSize = true;
             lblFieldsToExclude.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
@@ -972,6 +982,7 @@ namespace DBSyncTool
         private Label lblDefaultRecordCount;
         private NumericUpDown nudDefaultRecordCount;
         private CheckBox chkTruncateAll;
+        private CheckBox chkExecutePostTransferActions;
         private Label lblFieldsToExclude;
         private TextBox txtFieldsToExclude;
 
