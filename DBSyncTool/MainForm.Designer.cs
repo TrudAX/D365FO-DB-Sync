@@ -118,6 +118,13 @@ namespace DBSyncTool
             chkExecutePostTransferAuto = new CheckBox();
             btnExecutePostTransfer = new Button();
 
+            // Backup Database controls
+            lblBackupDatabase = new Label();
+            lblBackupDatabaseHelp = new Label();
+            txtBackupPath = new TextBox();
+            chkBackupDatabaseEnabled = new CheckBox();
+            btnExecuteBackup = new Button();
+
             // Action buttons
             btnPrepareTableList = new Button();
             btnProcessTables = new Button();
@@ -701,6 +708,11 @@ namespace DBSyncTool
             tabPostTransfer.Controls.Add(txtPostTransferSql);
             tabPostTransfer.Controls.Add(chkExecutePostTransferAuto);
             tabPostTransfer.Controls.Add(btnExecutePostTransfer);
+            tabPostTransfer.Controls.Add(lblBackupDatabase);
+            tabPostTransfer.Controls.Add(lblBackupDatabaseHelp);
+            tabPostTransfer.Controls.Add(txtBackupPath);
+            tabPostTransfer.Controls.Add(chkBackupDatabaseEnabled);
+            tabPostTransfer.Controls.Add(btnExecuteBackup);
             tabPostTransfer.Location = new Point(4, 24);
             tabPostTransfer.Name = "tabPostTransfer";
             tabPostTransfer.Padding = new Padding(3);
@@ -738,6 +750,34 @@ namespace DBSyncTool
             btnExecutePostTransfer.Text = "Execute";
             btnExecutePostTransfer.UseVisualStyleBackColor = true;
             btnExecutePostTransfer.Click += BtnExecutePostTransfer_Click;
+
+            // Backup Database Section
+            lblBackupDatabase.AutoSize = true;
+            lblBackupDatabase.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+            lblBackupDatabase.Location = new Point(10, 400);
+            lblBackupDatabase.Text = "AxDB Backup After Transfer";
+
+            lblBackupDatabaseHelp.AutoSize = true;
+            lblBackupDatabaseHelp.ForeColor = Color.Gray;
+            lblBackupDatabaseHelp.Location = new Point(10, 425);
+            lblBackupDatabaseHelp.Text = "Backup file path. Use [format] for date-time tokens (C# DateTime format), e.g.: J:\\MSSQL_BACKUP\\AxDB_[yyyy_MM_dd_HHmm].bak";
+
+            txtBackupPath.Location = new Point(10, 450);
+            txtBackupPath.Name = "txtBackupPath";
+            txtBackupPath.Size = new Size(700, 23);
+            txtBackupPath.Font = new Font("Consolas", 9F);
+
+            chkBackupDatabaseEnabled.AutoSize = true;
+            chkBackupDatabaseEnabled.Location = new Point(10, 483);
+            chkBackupDatabaseEnabled.Name = "chkBackupDatabaseEnabled";
+            chkBackupDatabaseEnabled.Text = "Execute automatically after successful transfer (and post-transfer scripts)";
+
+            btnExecuteBackup.Location = new Point(620, 478);
+            btnExecuteBackup.Name = "btnExecuteBackup";
+            btnExecuteBackup.Size = new Size(90, 30);
+            btnExecuteBackup.Text = "Execute";
+            btnExecuteBackup.UseVisualStyleBackColor = true;
+            btnExecuteBackup.Click += BtnExecuteBackup_Click;
 
             // Action Buttons (in Tables tab)
             btnPrepareTableList.Location = new Point(12, 250);
@@ -989,6 +1029,13 @@ namespace DBSyncTool
         private TextBox txtPostTransferSql;
         private CheckBox chkExecutePostTransferAuto;
         private Button btnExecutePostTransfer;
+
+        // Backup Database controls
+        private Label lblBackupDatabase;
+        private Label lblBackupDatabaseHelp;
+        private TextBox txtBackupPath;
+        private CheckBox chkBackupDatabaseEnabled;
+        private Button btnExecuteBackup;
 
         // Action Buttons
         private Button btnPrepareTableList;

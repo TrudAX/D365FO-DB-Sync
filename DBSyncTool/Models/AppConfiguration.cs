@@ -54,6 +54,10 @@ namespace DBSyncTool.Models
         // Whether to execute post-transfer scripts automatically after successful transfer
         public bool ExecutePostTransferAuto { get; set; } = false;
 
+        // Backup Database settings
+        public bool BackupDatabaseEnabled { get; set; } = false;
+        public string BackupPathPattern { get; set; } = "";  // e.g. J:\MSSQL_BACKUP\AxDB_[yyyy_MM_dd_HHmm].bak
+
         // Helper method to create a default configuration
         public static AppConfiguration CreateDefault()
         {

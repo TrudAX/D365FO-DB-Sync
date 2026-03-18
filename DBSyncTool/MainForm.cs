@@ -330,6 +330,10 @@ namespace DBSyncTool
             txtPostTransferSql.Text = _currentConfig.PostTransferSqlScripts;
             chkExecutePostTransferAuto.Checked = _currentConfig.ExecutePostTransferAuto;
 
+            // Backup Database
+            txtBackupPath.Text = _currentConfig.BackupPathPattern;
+            chkBackupDatabaseEnabled.Checked = _currentConfig.BackupDatabaseEnabled;
+
             UpdateConnectionTabTitle();
 
             // Initialize system excluded tables if empty (new configuration)
@@ -374,6 +378,10 @@ namespace DBSyncTool
             // Post-Transfer SQL Scripts
             _currentConfig.PostTransferSqlScripts = txtPostTransferSql.Text;
             _currentConfig.ExecutePostTransferAuto = chkExecutePostTransferAuto.Checked;
+
+            // Backup Database
+            _currentConfig.BackupPathPattern = txtBackupPath.Text;
+            _currentConfig.BackupDatabaseEnabled = chkBackupDatabaseEnabled.Checked;
         }
 
         private void RefreshTimestampUI()
@@ -771,6 +779,62 @@ namespace DBSyncTool
                 Log("═══════════════════════════════════════════════════════════════════");
                 MessageBox.Show($"Post-transfer SQL script failed:\n\n{error}",
                     "Post-Transfer Script Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return false;
+            }
+        }
+
+        private async void BtnExecuteBackup_Click(object? sender, EventArgs e)
+        {
+            if (string.IsNullOrWhiteSpace(txtBackupPath.Text))
+            {
+                MessageBox.Show("No backup path specified.", "Information",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            btnExecuteBackup.Enabled = false;
+
+            try
+            {
+                SaveConfigurationFromUI();
+                await ExecuteBackupAsync();
+            }
+            finally
+            {
+                btnExecuteBackup.Enabled = true;
+            }
+        }
+
+        /// <summary>
+        /// Executes database backup using AxDB connection settings.
+        /// </summary>
+        private async Task<bool> ExecuteBackupAsync()
+        {
+            var (_, database) = _currentConfig.AxDbConnection.ParseServerDatabase();
+            string dbName = string.IsNullOrWhiteSpace(database) ? "AxDB" : database;
+
+            Log("═══════════════════════════════════════════════════════════════════");
+            Log($"Starting {dbName} backup...");
+
+            string alias = _currentConfig.Alias ?? "default";
+            var service = new Services.BackupService(_currentConfig.AxDbConnection, Log);
+            var (success, error) = await service.ExecuteBackupAsync(
+                txtBackupPath.Text,
+                alias,
+                CancellationToken.None);
+
+            if (success)
+            {
+                Log($"{dbName} backup completed successfully.");
+                Log("═══════════════════════════════════════════════════════════════════");
+                return true;
+            }
+            else
+            {
+                Log($"{dbName} backup failed.");
+                Log("═══════════════════════════════════════════════════════════════════");
+                MessageBox.Show($"AxDB backup failed:\n\n{error}",
+                    "Backup Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return false;
             }
         }
@@ -1302,19 +1366,27 @@ namespace DBSyncTool
                     // Clear memory from completed tables
                     _orchestrator.ClearCompletedTablesMemory();
 
-                    // Auto-execute post-transfer SQL scripts if enabled and all tables succeeded
-                    if (chkExecutePostTransferAuto.Checked &&
-                        !string.IsNullOrWhiteSpace(txtPostTransferSql.Text))
-                    {
-                        var tables = _orchestrator.GetTables();
-                        bool allSucceeded = tables.Count > 0 &&
-                            tables.All(t => t.Status == TableStatus.Inserted || t.Status == TableStatus.Excluded);
+                    var tables = _orchestrator.GetTables();
+                    bool allSucceeded = tables.Count > 0 &&
+                        tables.All(t => t.Status == TableStatus.Inserted || t.Status == TableStatus.Excluded);
 
-                        if (allSucceeded)
-                        {
-                            Log("Auto-executing post-transfer SQL scripts...");
-                            await ExecutePostTransferScriptsAsync();
-                        }
+                    // Auto-execute post-transfer SQL scripts if enabled and all tables succeeded
+                    bool postTransferSuccess = true;
+                    if (chkExecutePostTransferAuto.Checked &&
+                        !string.IsNullOrWhiteSpace(txtPostTransferSql.Text) &&
+                        allSucceeded)
+                    {
+                        Log("Auto-executing post-transfer SQL scripts...");
+                        postTransferSuccess = await ExecutePostTransferScriptsAsync();
+                    }
+
+                    // Auto-execute backup if enabled and all tables succeeded and post-transfer scripts succeeded
+                    if (chkBackupDatabaseEnabled.Checked &&
+                        !string.IsNullOrWhiteSpace(txtBackupPath.Text) &&
+                        allSucceeded && postTransferSuccess)
+                    {
+                        Log("Auto-executing database backup...");
+                        await ExecuteBackupAsync();
                     }
                 }
 
