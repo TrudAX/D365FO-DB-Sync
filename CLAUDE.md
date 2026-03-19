@@ -25,6 +25,8 @@ dotnet run --project DBSyncTool/DBSyncTool.csproj
 
 Version format: `1.0.YYYY.DayOfYear` (auto-increments with each build using MSBuild properties)
 
+**Dependencies:** `Microsoft.Data.SqlClient`, `Microsoft.PowerShell.SDK`
+
 ## Creating Releases
 
 When creating a GitHub release, ALWAYS include the compiled binary:
@@ -211,6 +213,17 @@ By default, the system matches the last X records between AxDB and Tier2. For so
 - Manages triggers, sequences, and bulk inserts via SqlBulkCopy
 - Uses transactions with rollback on errors
 
+**PowerShellService** (`Services/PowerShellService.cs`)
+- Runs user-specified .ps1 scripts in-process via `Microsoft.PowerShell.SDK`
+- Passes `-BackupFilePath` parameter with the resolved backup path
+- Sets execution policy to `Bypass` (process-scoped) before invocation
+- Streams script output (Information/Error/Warning/Verbose) to log via raw logger (no timestamp prefix)
+- Used as third step in post-transfer action chain
+
+**BackupService** (`Services/BackupService.cs`)
+- Executes `BACKUP DATABASE` with real-time progress polling via DMV
+- Returns resolved backup path on success (stored in config as `LastBackupPath`)
+
 ### Data Flow (Two Stages)
 
 1. **Discover Tables**: Discovers tables from Tier2, applies inclusion/exclusion patterns, validates schemas against AxDB, generates fetch SQL for each table
@@ -269,6 +282,9 @@ Critical optimization in `Models/SqlDictionaryCache.cs`:
 - `ParallelWorkers` setting controls concurrent table processing (default: 10)
 - Timestamp storage: `Tier2Timestamps` and `AxDBTimestamps` store newline-separated entries (`TableName|0xHEXVALUE`)
 - `TruncateThresholdPercent` controls INCREMENTAL vs TRUNCATE mode decision (default: 40)
+- `PowerShellScriptPath`: Path to .ps1 script executed after backup
+- `PowerShellAutoExecute`: Whether to auto-run PowerShell script after successful backup
+- `LastBackupPath`: Resolved path from last successful backup (persisted for manual PowerShell execution)
 
 **TimestampManager** (`Helpers/TimestampManager.cs`)
 - Dictionary-based storage for SysRowVersion timestamps per table
@@ -480,7 +496,8 @@ Used for tables without SysRowVersion OR when optimization not available:
 
 ### General
 - Password handling uses simple Base64 obfuscation (not encryption) via `EncryptionHelper`
-- All SQL operations are logged with timestamps `[HH:mm:ss]` to the MainForm log TextBox
+- All SQL operations are logged with timestamps `[HH:mm:ss]` to the MainForm log TextBox via `Log()`
+- PowerShell script output uses `LogRaw()` — no timestamp or prefix, for clean copyable output
 - Log separator between stages: "─────────────────────────────────────────────"
 - Connection strings differ for Azure SQL (with Encrypt=True, ApplicationIntent=ReadOnly) vs local SQL Server
 - DataTable caching in `TableInfo.CachedData` cleared immediately after successful insert, retained only for failed tables
@@ -552,7 +569,8 @@ Used for tables without SysRowVersion OR when optimization not available:
 - Connection pool must accommodate parallel workers via connection string setting
 
 **UI-specific modifications:**
-- MainForm uses TabControl with four tabs: "Tables" (static), "Connection-{Alias}" (dynamic), "Saved Values" (timestamps/RecIds), "Post-Transfer Actions" (SQL scripts)
+- MainForm uses TabControl with four tabs: "Tables" (static), "Connection-{Alias}" (dynamic), "Saved Values" (timestamps/RecIds), "Post-Transfer Actions" (SQL scripts, backup, PowerShell)
+- Post-transfer execution chain: SQL scripts → Database Backup → PowerShell script (each step conditional on previous success)
 - DataGridView bound to `List<TableInfo>` via events from CopyOrchestrator
 - Context menu items: "Copy Table Name" and "Get SQL"
 - Error column truncates to 50 chars, full error in tooltip
