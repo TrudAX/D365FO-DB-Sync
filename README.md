@@ -8,7 +8,9 @@ This tool helps developers synchronize data from D365FO cloud environments to th
 
 The main idea: make the last X records (ordered by RecId) the same between Tier2 and AxDB, ensuring your local environment has the most recent data from Tier2.
 
-![](Assets/MainDialog.png)
+![Main dialog](Assets/MainDialog.png)
+
+![Connections](Assets/MainDialogConnection.png)
 
 ![Post transfer scripts](Assets/MainDialogPostTransfer.png)
 
@@ -240,15 +242,6 @@ For tables with `SysRowVersion` column:
 - 20x+ faster sync for tables with minimal changes
 - Automatic fallback to full refresh when needed
 - Timestamps auto-saved after each table (crash-safe)
-
-### Technical Features
-- **Automatic Sequence Updates**: Updates D365FO sequence tables after insert
-- **Trigger Management**: Disables during insert, re-enables after (even on error)
-- **Bulk Insert**: SqlBulkCopy with 10,000 row batches for performance
-- **Transaction-based Operations**: Rollback on errors with proper cleanup
-- **Connection Pooling**: Optimized for parallel execution (Max Pool Size=20)
-- **Memory Efficient**: Only N tables in memory at once (where N = parallel workers)
-- **Context-aware Cleanup**: Smart delete logic based on strategy and optimization mode
 
 ## Requirements
 
