@@ -37,6 +37,9 @@ namespace DBSyncTool
 
         private void MainForm_FormClosing(object? sender, FormClosingEventArgs e)
         {
+            // Cancel any running operations first
+            _orchestrator?.Stop();
+
             // Cleanup orchestrator and event handlers
             UnsubscribeOrchestratorEvents();
             _orchestrator = null;
@@ -47,6 +50,9 @@ namespace DBSyncTool
             // Stop and dispose update timer
             _updateTimer.Stop();
             _updateTimer.Dispose();
+
+            // Force exit to ensure all background threads/tasks are terminated
+            Environment.Exit(0);
         }
 
         private void InitializeDataGrid()
@@ -1092,16 +1098,26 @@ namespace DBSyncTool
         {
             var sql = new System.Text.StringBuilder();
 
+            if (table.UseOptimizedMode)
+                return GenerateSqlForTableOptimized(table);
+
             // Header
             sql.AppendLine("-- ============================================");
             sql.AppendLine($"-- Table: {table.TableName}");
             sql.AppendLine($"-- Strategy: {table.StrategyDisplay}");
+            sql.AppendLine($"-- Mode: Standard (no stored timestamps)");
             sql.AppendLine($"-- Cleanup: {GetCleanupDescription(table)}");
             sql.AppendLine("-- ============================================");
             sql.AppendLine();
 
             // Source Query
             sql.AppendLine("-- === SOURCE QUERY (Tier2) ===");
+            if (table.FetchSql.Contains("(1 = 1)") && !string.IsNullOrEmpty(table.SqlTemplate) &&
+                table.SqlTemplate.Contains("@sysRowVersionFilter", StringComparison.OrdinalIgnoreCase))
+            {
+                sql.AppendLine("-- Note: @sysRowVersionFilter replaced with (1 = 1) — no stored timestamps yet");
+                sql.AppendLine("-- After first successful run, INCREMENTAL mode will be used instead");
+            }
             sql.AppendLine(table.FetchSql);
             sql.AppendLine();
 
@@ -1120,7 +1136,94 @@ namespace DBSyncTool
             sql.AppendLine($"DECLARE @MaxRecId BIGINT = (SELECT MAX(RECID) FROM [{table.TableName}])");
             sql.AppendLine($"DECLARE @TableId INT = {table.AxDbTableId} -- AxDB TableId from SQLDICTIONARY");
             sql.AppendLine($"IF @MaxRecId > (SELECT CAST(current_value AS BIGINT) FROM sys.sequences WHERE name = 'SEQ_{table.AxDbTableId}')");
-            sql.AppendLine($"    ALTER SEQUENCE [SEQ_{table.AxDbTableId}] RESTART WITH @MaxRecId");
+            sql.AppendLine($"    ALTER SEQUENCE [SEQ_{table.AxDbTableId}] RESTART WITH @MaxRecId + {AxDbDataService.SEQUENCE_GAP}");
+
+            return sql.ToString();
+        }
+
+        private string GenerateSqlForTableOptimized(TableInfo table)
+        {
+            var sql = new System.Text.StringBuilder();
+            string tier2TsHex = table.StoredTier2Timestamp != null
+                ? TimestampHelper.ToHexString(table.StoredTier2Timestamp) : "N/A";
+            string axdbTsHex = table.StoredAxDBTimestamp != null
+                ? TimestampHelper.ToHexString(table.StoredAxDBTimestamp) : "N/A";
+
+            sql.AppendLine("-- ============================================");
+            sql.AppendLine($"-- Table: {table.TableName}");
+            sql.AppendLine($"-- Strategy: {table.StrategyDisplay}");
+            sql.AppendLine($"-- Mode: OPTIMIZED (stored timestamps found)");
+            sql.AppendLine($"-- Stored Tier2 Timestamp: {tier2TsHex}");
+            sql.AppendLine($"-- Stored AxDB Timestamp:  {axdbTsHex}");
+            sql.AppendLine("-- ============================================");
+            sql.AppendLine();
+
+            // Step 1: Control query
+            string fieldList = string.Join(", ", table.CopyableFields.Select(f => $"[{f}]"));
+            sql.AppendLine("-- === STEP 1: CONTROL QUERY (Tier2) ===");
+            sql.AppendLine("-- Lightweight query to detect changes (~1KB per 1000 records)");
+            if (table.StrategyType == CopyStrategyType.Sql && !string.IsNullOrEmpty(table.SqlTemplate)
+                && table.SqlTemplate.Contains("@sysRowVersionFilter", StringComparison.OrdinalIgnoreCase))
+            {
+                string controlSql = table.SqlTemplate
+                    .Replace("*", "[RecId], [SysRowVersion]")
+                    .Replace("@recordCount", (table.RecIdCount ?? _currentConfig.DefaultRecordCount).ToString())
+                    .Replace("@sysRowVersionFilter", "(1 = 1)", StringComparison.OrdinalIgnoreCase);
+                sql.AppendLine(controlSql);
+            }
+            else
+            {
+                sql.AppendLine($"SELECT TOP ({table.RecIdCount ?? _currentConfig.DefaultRecordCount}) [RecId], [SysRowVersion] FROM [{table.TableName}] ORDER BY RecId DESC");
+            }
+            sql.AppendLine();
+
+            // Step 2: Change detection
+            sql.AppendLine("-- === STEP 2: CHANGE DETECTION ===");
+            sql.AppendLine("-- Compare SysRowVersion against stored timestamps");
+            sql.AppendLine($"-- Tier2 changed = records WHERE SysRowVersion > {tier2TsHex}");
+            sql.AppendLine($"-- AxDB changed  = records WHERE SysRowVersion > {axdbTsHex}");
+            sql.AppendLine($"-- If change% >= threshold ({_currentConfig.TruncateThresholdPercent}%) → TRUNCATE mode");
+            sql.AppendLine($"-- If change% <  threshold ({_currentConfig.TruncateThresholdPercent}%) → INCREMENTAL mode (below)");
+            sql.AppendLine();
+
+            // Step 3: INCREMENTAL mode
+            sql.AppendLine("-- === STEP 3: INCREMENTAL MODE ===");
+            sql.AppendLine();
+            sql.AppendLine("-- Step 3.1: Delete Tier2-modified records from AxDB");
+            sql.AppendLine($"DELETE FROM [{table.TableName}] WHERE RecId IN");
+            sql.AppendLine($"  (SELECT RecId FROM ControlData WHERE SysRowVersion > @StoredTier2Timestamp)");
+            sql.AppendLine();
+            sql.AppendLine("-- Step 3.2: Delete AxDB-modified records from AxDB");
+            sql.AppendLine($"DELETE FROM [{table.TableName}] WHERE RecId IN");
+            sql.AppendLine($"  (SELECT RecId FROM ControlData WHERE SysRowVersion > @StoredAxDBTimestamp)");
+            sql.AppendLine();
+            sql.AppendLine("-- Step 3.3: Fetch missing/changed records from Tier2");
+            if (table.StrategyType == CopyStrategyType.Sql && !string.IsNullOrEmpty(table.SqlTemplate)
+                && table.SqlTemplate.Contains("@sysRowVersionFilter", StringComparison.OrdinalIgnoreCase))
+            {
+                string fetchSql = table.SqlTemplate
+                    .Replace("*", fieldList)
+                    .Replace("@recordCount", (table.RecIdCount ?? _currentConfig.DefaultRecordCount).ToString())
+                    .Replace("@sysRowVersionFilter", "SysRowVersion >= @Threshold AND RecId >= @MinRecId", StringComparison.OrdinalIgnoreCase);
+                sql.AppendLine(fetchSql);
+            }
+            else
+            {
+                sql.AppendLine($"SELECT TOP ({table.RecIdCount ?? _currentConfig.DefaultRecordCount}) {fieldList} FROM [{table.TableName}]");
+                sql.AppendLine("WHERE SysRowVersion >= @Threshold AND RecId >= @MinRecId ORDER BY RecId DESC");
+            }
+            sql.AppendLine("-- Filter client-side: remove RecIds that already exist in AxDB");
+            sql.AppendLine();
+
+            sql.AppendLine("-- Step 3.4: Bulk insert filtered records");
+            sql.AppendLine("-- SqlBulkCopy will be used to insert fetched records");
+            sql.AppendLine();
+
+            // Sequence Update
+            sql.AppendLine("-- === SEQUENCE UPDATE ===");
+            sql.AppendLine($"DECLARE @MaxRecId BIGINT = (SELECT MAX(RECID) FROM [{table.TableName}])");
+            sql.AppendLine($"IF @MaxRecId > (SELECT CAST(current_value AS BIGINT) FROM sys.sequences WHERE name = 'SEQ_{table.AxDbTableId}')");
+            sql.AppendLine($"    ALTER SEQUENCE [SEQ_{table.AxDbTableId}] RESTART WITH @MaxRecId + {AxDbDataService.SEQUENCE_GAP}");
 
             return sql.ToString();
         }

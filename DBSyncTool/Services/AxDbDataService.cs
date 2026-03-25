@@ -1,6 +1,7 @@
 using System.Data;
 using System.Diagnostics;
 using Microsoft.Data.SqlClient;
+using DBSyncTool.Helpers;
 using DBSyncTool.Models;
 
 namespace DBSyncTool.Services
@@ -1041,6 +1042,7 @@ namespace DBSyncTool.Services
                     WHERE SysRowVersion > @Tier2Timestamp
                 )";
             _logger($"[AxDB SQL] Delete Tier2-modified: {delete1}");
+            _logger($"[AxDB] @Tier2Timestamp = {TimestampHelper.ToHexString(tier2Timestamp)}");
 
             using (var cmd = new SqlCommand(delete1, connection, transaction))
             {
@@ -1054,6 +1056,7 @@ namespace DBSyncTool.Services
                 DELETE FROM [{table.TableName}]
                 WHERE SysRowVersion > @AxDBTimestamp";
             _logger($"[AxDB SQL] Delete AxDB-modified: {delete2}");
+            _logger($"[AxDB] @AxDBTimestamp = {TimestampHelper.ToHexString(axdbTimestamp)}");
 
             using (var cmd = new SqlCommand(delete2, connection, transaction))
             {

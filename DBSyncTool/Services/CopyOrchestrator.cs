@@ -768,6 +768,7 @@ namespace DBSyncTool.Services
             if (axdbMaxTimestamp != null)
             {
                 _timestampManager.SetTimestamps(table.TableName, tier2MaxTimestamp, axdbMaxTimestamp);
+                _logger($"[{table.TableName}] Timestamps saved: Tier2={TimestampHelper.ToHexString(tier2MaxTimestamp)}, AxDB={TimestampHelper.ToHexString(axdbMaxTimestamp)}");
                 _timestampManager.SaveToConfig(_config);
                 OnTimestampsUpdated(); // Trigger auto-save to disk
             }
@@ -829,7 +830,9 @@ namespace DBSyncTool.Services
 
                     // Still update timestamps to current max
                     byte[]? axdbMaxTimestamp = await _axDbService.GetMaxTimestampAsync(table.TableName, readConnection, null);
-                    _timestampManager.SetTimestamps(table.TableName, tier2MaxTimestamp, axdbMaxTimestamp ?? tier2MaxTimestamp);
+                    byte[] effectiveAxdb = axdbMaxTimestamp ?? tier2MaxTimestamp;
+                    _timestampManager.SetTimestamps(table.TableName, tier2MaxTimestamp, effectiveAxdb);
+                    _logger($"[{table.TableName}] Timestamps saved: Tier2={TimestampHelper.ToHexString(tier2MaxTimestamp)}, AxDB={TimestampHelper.ToHexString(effectiveAxdb)}");
                     _timestampManager.SaveToConfig(_config);
                     OnTimestampsUpdated();
 
@@ -998,6 +1001,7 @@ namespace DBSyncTool.Services
                 if (axdbMaxTimestamp != null)
                 {
                     _timestampManager.SetTimestamps(table.TableName, tier2MaxTimestamp, axdbMaxTimestamp);
+                    _logger($"[{table.TableName}] Timestamps saved: Tier2={TimestampHelper.ToHexString(tier2MaxTimestamp)}, AxDB={TimestampHelper.ToHexString(axdbMaxTimestamp)}");
                     _timestampManager.SaveToConfig(_config);
                     OnTimestampsUpdated(); // Trigger auto-save to disk
                 }
@@ -1156,9 +1160,9 @@ namespace DBSyncTool.Services
                         if (tier2MaxTs != null && axdbMaxTs != null)
                         {
                             _timestampManager.SetTimestamps(table.TableName, tier2MaxTs, axdbMaxTs);
+                            _logger($"[{table.TableName}] Timestamps saved: Tier2={TimestampHelper.ToHexString(tier2MaxTs)}, AxDB={TimestampHelper.ToHexString(axdbMaxTs)}");
                             _timestampManager.SaveToConfig(_config);
                             OnTimestampsUpdated(); // Trigger auto-save to disk
-                            _logger($"[{table.TableName}] Timestamps saved for future optimization");
                         }
                     }
                     catch (Exception ex)

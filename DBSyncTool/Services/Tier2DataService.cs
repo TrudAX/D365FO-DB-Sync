@@ -1,5 +1,6 @@
 using System.Data;
 using Microsoft.Data.SqlClient;
+using DBSyncTool.Helpers;
 using DBSyncTool.Models;
 
 namespace DBSyncTool.Services
@@ -289,13 +290,15 @@ namespace DBSyncTool.Services
             }
 
             _logger($"[Tier2 SQL] Timestamp query: {sql}");
+            byte[] effectiveThreshold = timestampThreshold ?? new byte[8];
+            _logger($"[Tier2] @Threshold = {TimestampHelper.ToHexString(effectiveThreshold)}, @MinRecId = {minRecId}");
 
             using var connection = new SqlConnection(_connectionString);
             using var command = new SqlCommand(sql, connection);
 
             // Ensure timestamp parameter is never null - use minimum timestamp (all zeros) if null
             var param = command.Parameters.Add("@Threshold", System.Data.SqlDbType.Binary, 8);
-            param.Value = timestampThreshold ?? new byte[8];
+            param.Value = effectiveThreshold;
 
             command.Parameters.AddWithValue("@MinRecId", minRecId);
             command.CommandTimeout = _connectionSettings.CommandTimeout;

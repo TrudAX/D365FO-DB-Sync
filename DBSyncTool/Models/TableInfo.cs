@@ -77,7 +77,7 @@ namespace DBSyncTool.Models
                         parts.Add($"RecId:{RecIdCount ?? 0}");
                         break;
                     case CopyStrategyType.Sql:
-                        parts.Add($"SQL:{RecIdCount ?? 0}");
+                        parts.Add(RecIdCount.HasValue ? $"SQL:{RecIdCount}" : "SQL");
                         break;
                 }
 
