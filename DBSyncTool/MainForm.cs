@@ -1600,6 +1600,14 @@ namespace DBSyncTool
             });
         }
 
+        private void BtnCopyTextBox_Click(object? sender, EventArgs e)
+        {
+            if (sender is Button btn && btn.Tag is TextBox txt && !string.IsNullOrEmpty(txt.Text))
+            {
+                Clipboard.SetText(txt.Text);
+            }
+        }
+
         private void BtnClearTimestamps_Click(object sender, EventArgs e)
         {
             var result = MessageBox.Show(

@@ -97,6 +97,16 @@ namespace DBSyncTool.Services
         /// </summary>
         public async Task<int> InsertDataAsync(TableInfo tableInfo, CancellationToken cancellationToken)
         {
+            // When UseTruncate is set and Tier2 has 0 rows, just truncate the AxDB table
+            if ((tableInfo.CachedData == null || tableInfo.CachedData.Rows.Count == 0) && tableInfo.UseTruncate)
+            {
+                using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync(cancellationToken);
+                _logger($"[AxDB] {tableInfo.TableName}: Tier2 empty, truncating AxDB table");
+                await TruncateWithFallbackAsync(tableInfo.TableName, conn, null, cancellationToken);
+                return 0;
+            }
+
             if (tableInfo.CachedData == null || tableInfo.CachedData.Rows.Count == 0)
                 return 0;
 
@@ -916,6 +926,36 @@ namespace DBSyncTool.Services
 
             await connection.OpenAsync(cancellationToken);
             return Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken));
+        }
+
+        /// <summary>
+        /// Gets set of table names that have at least 1 row in AxDB (fast DMV-based query)
+        /// </summary>
+        public async Task<HashSet<string>> GetNonEmptyTableNamesAsync(CancellationToken cancellationToken)
+        {
+            string sql = @"
+                SELECT o.name
+                FROM sys.dm_db_partition_stats s
+                INNER JOIN sys.objects o ON o.object_id = s.object_id
+                WHERE o.type = 'U'
+                GROUP BY o.name
+                HAVING MAX(s.row_count) > 0";
+
+            var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            using var connection = new SqlConnection(_connectionString);
+            using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = _connectionSettings.CommandTimeout;
+
+            await connection.OpenAsync(cancellationToken);
+            using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                result.Add(reader.GetString(0));
+            }
+
+            return result;
         }
 
         /// <summary>

@@ -158,6 +158,9 @@ namespace DBSyncTool
             grpLog = new GroupBox();
             txtLog = new TextBox();
             btnClearLog = new Button();
+            btnCopyTier2Timestamps = new Button();
+            btnCopyAxDBTimestamps = new Button();
+            btnCopyMaxRecIds = new Button();
 
             tabControl.SuspendLayout();
             tabTables.SuspendLayout();
@@ -647,11 +650,14 @@ namespace DBSyncTool
             tabSavedRowValues.Controls.Add(lblTruncateThreshold);
             tabSavedRowValues.Controls.Add(nudTruncateThreshold);
             tabSavedRowValues.Controls.Add(lblTier2Timestamps);
+            tabSavedRowValues.Controls.Add(btnCopyTier2Timestamps);
             tabSavedRowValues.Controls.Add(txtTier2Timestamps);
             tabSavedRowValues.Controls.Add(lblAxDBTimestamps);
+            tabSavedRowValues.Controls.Add(btnCopyAxDBTimestamps);
             tabSavedRowValues.Controls.Add(txtAxDBTimestamps);
             tabSavedRowValues.Controls.Add(btnClearTimestamps);
             tabSavedRowValues.Controls.Add(lblMaxTransferredRecIds);
+            tabSavedRowValues.Controls.Add(btnCopyMaxRecIds);
             tabSavedRowValues.Controls.Add(txtMaxTransferredRecIds);
             tabSavedRowValues.Location = new Point(4, 24);
             tabSavedRowValues.Name = "tabSavedRowValues";
@@ -681,6 +687,16 @@ namespace DBSyncTool
             lblTier2Timestamps.Location = new Point(10, 80);
             lblTier2Timestamps.Text = "Tier2 Timestamps:";
 
+            btnCopyTier2Timestamps.Location = new Point(140, 76);
+            btnCopyTier2Timestamps.Size = new Size(22, 22);
+            btnCopyTier2Timestamps.Text = "C";
+            btnCopyTier2Timestamps.FlatStyle = FlatStyle.Flat;
+            btnCopyTier2Timestamps.Font = new Font("Segoe UI", 7F);
+            btnCopyTier2Timestamps.Padding = Padding.Empty;
+            btnCopyTier2Timestamps.Tag = txtTier2Timestamps;
+            btnCopyTier2Timestamps.Click += BtnCopyTextBox_Click;
+            new ToolTip().SetToolTip(btnCopyTier2Timestamps, "Copy to clipboard");
+
             txtTier2Timestamps.Location = new Point(10, 100);
             txtTier2Timestamps.Multiline = true;
             txtTier2Timestamps.Name = "txtTier2Timestamps";
@@ -692,6 +708,16 @@ namespace DBSyncTool
             lblAxDBTimestamps.AutoSize = true;
             lblAxDBTimestamps.Location = new Point(10, 390);
             lblAxDBTimestamps.Text = "AxDB Timestamps:";
+
+            btnCopyAxDBTimestamps.Location = new Point(140, 386);
+            btnCopyAxDBTimestamps.Size = new Size(22, 22);
+            btnCopyAxDBTimestamps.Text = "C";
+            btnCopyAxDBTimestamps.FlatStyle = FlatStyle.Flat;
+            btnCopyAxDBTimestamps.Font = new Font("Segoe UI", 7F);
+            btnCopyAxDBTimestamps.Padding = Padding.Empty;
+            btnCopyAxDBTimestamps.Tag = txtAxDBTimestamps;
+            btnCopyAxDBTimestamps.Click += BtnCopyTextBox_Click;
+            new ToolTip().SetToolTip(btnCopyAxDBTimestamps, "Copy to clipboard");
 
             txtAxDBTimestamps.Location = new Point(10, 410);
             txtAxDBTimestamps.Multiline = true;
@@ -713,6 +739,16 @@ namespace DBSyncTool
             lblMaxTransferredRecIds.Location = new Point(500, 15);
             lblMaxTransferredRecIds.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
             lblMaxTransferredRecIds.Text = "Max Transferred RecIds";
+
+            btnCopyMaxRecIds.Location = new Point(670, 11);
+            btnCopyMaxRecIds.Size = new Size(22, 22);
+            btnCopyMaxRecIds.Text = "C";
+            btnCopyMaxRecIds.FlatStyle = FlatStyle.Flat;
+            btnCopyMaxRecIds.Font = new Font("Segoe UI", 7F);
+            btnCopyMaxRecIds.Padding = Padding.Empty;
+            btnCopyMaxRecIds.Tag = txtMaxTransferredRecIds;
+            btnCopyMaxRecIds.Click += BtnCopyTextBox_Click;
+            new ToolTip().SetToolTip(btnCopyMaxRecIds, "Copy to clipboard");
 
             txtMaxTransferredRecIds.Location = new Point(500, 40);
             txtMaxTransferredRecIds.Multiline = true;
@@ -1103,6 +1139,9 @@ namespace DBSyncTool
         private Label lblAxDBTimestamps;
         private TextBox txtAxDBTimestamps;
         private Button btnClearTimestamps;
+        private Button btnCopyTier2Timestamps;
+        private Button btnCopyAxDBTimestamps;
+        private Button btnCopyMaxRecIds;
         private Label lblMaxTransferredRecIds;
         private TextBox txtMaxTransferredRecIds;
 

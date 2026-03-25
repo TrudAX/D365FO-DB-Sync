@@ -31,12 +31,16 @@ namespace DBSyncTool.Services
         /// Discovers all tables in Tier2 database
         /// Returns list of (TableName, RowCount, SizeGB, BytesPerRow)
         /// </summary>
-        public async Task<List<(string TableName, long RowCount, decimal SizeGB, long BytesPerRow)>> DiscoverTablesAsync(string? specificTableName = null)
+        public async Task<List<(string TableName, long RowCount, decimal SizeGB, long BytesPerRow)>> DiscoverTablesAsync(string? specificTableName = null, bool includeEmpty = false)
         {
             // Build query with optional table name filter
             string tableFilter = !string.IsNullOrWhiteSpace(specificTableName)
                 ? "AND UPPER(o.name) = @TableName"
                 : "";
+
+            string havingClause = includeEmpty
+                ? "HAVING MAX(s.row_count) >= 0"
+                : "HAVING MAX(s.row_count) > 0";
 
             string query = $@"
                 SELECT
@@ -53,7 +57,7 @@ namespace DBSyncTool.Services
                 WHERE o.type = 'U'
                 {tableFilter}
                 GROUP BY o.name
-                HAVING MAX(s.row_count) > 0
+                {havingClause}
                 ORDER BY [SizeGB] DESC";
 
             _logger($"[Tier2] Executing table discovery query");

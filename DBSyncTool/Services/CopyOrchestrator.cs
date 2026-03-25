@@ -17,7 +17,8 @@ namespace DBSyncTool.Services
         private readonly TimestampManager _timestampManager;
         private readonly MaxRecIdManager _maxRecIdManager;
 
-        private List<TableInfo> _tables = new List<TableInfo>();
+        private readonly List<TableInfo> _tables = new List<TableInfo>();
+        private readonly object _tablesLock = new object();
         private CancellationTokenSource? _cancellationTokenSource;
 
         public event EventHandler<List<TableInfo>>? TablesUpdated;
@@ -37,7 +38,10 @@ namespace DBSyncTool.Services
             _maxRecIdManager.LoadFromConfig(config);
         }
 
-        public List<TableInfo> GetTables() => _tables.ToList();
+        public List<TableInfo> GetTables()
+        {
+            lock (_tablesLock) return _tables.ToList();
+        }
 
         /// <summary>
         /// Stage 1: Discover Tables
@@ -50,7 +54,7 @@ namespace DBSyncTool.Services
             try
             {
                 _logger("Starting Discover Tables...");
-                _tables.Clear();
+                lock (_tablesLock) _tables.Clear();
 
                 // Parse and validate strategy overrides
                 var strategyOverrides = ParseStrategyOverrides(_config.StrategyOverrides);
@@ -74,10 +78,19 @@ namespace DBSyncTool.Services
                 _logger("─────────────────────────────────────────────");
                 // ====================================================
 
-                // Discover tables from Tier2
+                // Discover tables from Tier2 (include empty tables when force truncate is enabled)
                 _logger("Discovering tables from Tier2...");
-                var discoveredTables = await _tier2Service.DiscoverTablesAsync(specificTableName);
+                var discoveredTables = await _tier2Service.DiscoverTablesAsync(specificTableName, includeEmpty: _config.TruncateAllTables);
                 _logger($"Discovered {discoveredTables.Count} tables");
+
+                // Pre-load non-empty AxDB table names for fast lookup (used when truncate mode includes empty Tier2 tables)
+                HashSet<string>? axdbNonEmptyTables = null;
+                if (_config.TruncateAllTables && discoveredTables.Any(t => t.RowCount == 0))
+                {
+                    _logger("Loading AxDB non-empty table list for truncate mode...");
+                    axdbNonEmptyTables = await _axDbService.GetNonEmptyTableNamesAsync(cancellationToken);
+                    _logger($"Found {axdbNonEmptyTables.Count} non-empty tables in AxDB");
+                }
 
                 // Combine TablesToExclude and SystemExcludedTables
                 var combinedExclusions = CombineExclusionPatterns(_config.TablesToExclude, _config.SystemExcludedTables);
@@ -102,16 +115,30 @@ namespace DBSyncTool.Services
                         // If ShowExcludedTables is enabled and table has at least 1 record, add it with Excluded status
                         if (_config.ShowExcludedTables && rowCount > 0)
                         {
-                            _tables.Add(new TableInfo
+                            lock (_tablesLock)
                             {
-                                TableName = tableName,
-                                Tier2RowCount = rowCount,
-                                Tier2SizeGB = sizeGB,
-                                Status = TableStatus.Excluded
-                            });
+                                _tables.Add(new TableInfo
+                                {
+                                    TableName = tableName,
+                                    Tier2RowCount = rowCount,
+                                    Tier2SizeGB = sizeGB,
+                                    Status = TableStatus.Excluded
+                                });
+                            }
                         }
                         skipped++;
                         continue;
+                    }
+
+                    // Skip empty Tier2 tables unless AxDB has rows (truncate mode only)
+                    if (rowCount == 0)
+                    {
+                        if (axdbNonEmptyTables == null || !axdbNonEmptyTables.Contains(tableName))
+                        {
+                            skipped++;
+                            continue;
+                        }
+                        _logger($"[Truncate] {tableName}: 0 rows in Tier2, has rows in AxDB — will truncate");
                     }
 
                     // ========== USE CACHE INSTEAD OF DATABASE QUERIES ==========
@@ -212,7 +239,7 @@ namespace DBSyncTool.Services
                         StoredMaxRecId = _maxRecIdManager.GetMaxRecId(tableName)
                     };
 
-                    _tables.Add(tableInfo);
+                    lock (_tablesLock) _tables.Add(tableInfo);
                     processed++;
                 }
 
