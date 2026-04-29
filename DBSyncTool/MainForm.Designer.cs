@@ -118,6 +118,7 @@ namespace DBSyncTool
             txtPostTransferSql = new TextBox();
             chkExecutePostTransferAuto = new CheckBox();
             btnExecutePostTransfer = new Button();
+            btnInitPostTransferSql = new Button();
 
             // Backup Database controls
             lblBackupDatabase = new Label();
@@ -764,6 +765,7 @@ namespace DBSyncTool
             tabPostTransfer.Controls.Add(txtPostTransferSql);
             tabPostTransfer.Controls.Add(chkExecutePostTransferAuto);
             tabPostTransfer.Controls.Add(btnExecutePostTransfer);
+            tabPostTransfer.Controls.Add(btnInitPostTransferSql);
             tabPostTransfer.Controls.Add(lblBackupDatabase);
             tabPostTransfer.Controls.Add(lblBackupDatabaseHelp);
             tabPostTransfer.Controls.Add(txtBackupPath);
@@ -814,6 +816,12 @@ namespace DBSyncTool
             btnExecutePostTransfer.Text = "Execute";
             btnExecutePostTransfer.UseVisualStyleBackColor = true;
             btnExecutePostTransfer.Click += BtnExecutePostTransfer_Click;
+
+            btnInitPostTransferSql.Location = new Point(250, 12);
+            btnInitPostTransferSql.Name = "btnInitPostTransferSql";
+            btnInitPostTransferSql.Size = new Size(50, 23);
+            btnInitPostTransferSql.Text = "Init";
+            btnInitPostTransferSql.Click += BtnInitPostTransferSql_Click;
 
             // Backup Database Section
             lblBackupDatabase.AutoSize = true;
@@ -1151,6 +1159,7 @@ namespace DBSyncTool
         private TextBox txtPostTransferSql;
         private CheckBox chkExecutePostTransferAuto;
         private Button btnExecutePostTransfer;
+        private Button btnInitPostTransferSql;
 
         // Backup Database controls
         private Label lblBackupDatabase;

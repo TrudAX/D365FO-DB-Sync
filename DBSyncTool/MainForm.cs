@@ -1664,34 +1664,71 @@ namespace DBSyncTool
 
         private void InitializeSystemExcludedTables()
         {
-            string defaultSystemExclusions = string.Join("\r\n", new[]
+            var content = LoadDefaultSection("SystemExcludedTables");
+            if (content != null)
             {
-                "AIFCHANGETRACKINGDELETEDOBJECT",
-                "AxKPI*",
-                "Batch*",
-                "BUSINESSEVENTSTABLE",
-                "DUALWRITE*",
-                "FORMCONTROL*",
-                "FORMRUN*",
-                "KEYVAULT*",
-                "RetailCDX*",
-                "RETAILHARDWAREPROFILE",
-                "SQL*",
-                "Sys*",
-                "SYSTEMPARAMETERS",
-                "TIMEZONEINFO",
-                "UserInfo",
-                "VENDACCOUNTNUMOBJECTREFERENCES"
-            });
+                txtSystemExcludedTables.Text = content;
+                _currentConfig.SystemExcludedTables = content;
+            }
+        }
 
-            txtSystemExcludedTables.Text = defaultSystemExclusions;
-            _currentConfig.SystemExcludedTables = defaultSystemExclusions;
+        private string? LoadDefaultSection(string sectionName)
+        {
+            var filePath = Helpers.DefaultValuesHelper.GetDefaultFilePath();
+            if (!File.Exists(filePath))
+                return null;
+
+            return Helpers.DefaultValuesHelper.ReadSection(filePath, sectionName);
         }
 
         private void BtnInitSystemExcludedTables_Click(object sender, EventArgs e)
         {
-            InitializeSystemExcludedTables();
-            Log("System excluded tables initialized with default values");
+            var filePath = Helpers.DefaultValuesHelper.GetDefaultFilePath();
+            if (!File.Exists(filePath))
+            {
+                MessageBox.Show("DefaultValues.ini not found.", "Init", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            var content = Helpers.DefaultValuesHelper.ReadSection(filePath, "SystemExcludedTables");
+            if (content == null)
+            {
+                MessageBox.Show("Section [SystemExcludedTables] not found in DefaultValues.ini.", "Init", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            var result = MessageBox.Show("Overwrite System Excluded Tables from DefaultValues.ini?", "Init", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            if (result == DialogResult.Yes)
+            {
+                txtSystemExcludedTables.Text = content;
+                _currentConfig.SystemExcludedTables = content;
+                Log("System excluded tables initialized from DefaultValues.ini");
+            }
+        }
+
+        private void BtnInitPostTransferSql_Click(object sender, EventArgs e)
+        {
+            var filePath = Helpers.DefaultValuesHelper.GetDefaultFilePath();
+            if (!File.Exists(filePath))
+            {
+                MessageBox.Show("DefaultValues.ini not found.", "Init", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            var content = Helpers.DefaultValuesHelper.ReadSection(filePath, "PostTransferSql");
+            if (content == null)
+            {
+                MessageBox.Show("Section [PostTransferSql] not found in DefaultValues.ini.", "Init", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            var result = MessageBox.Show("Overwrite Post-Transfer SQL from DefaultValues.ini?", "Init", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            if (result == DialogResult.Yes)
+            {
+                txtPostTransferSql.Text = content;
+                _currentConfig.PostTransferSqlScripts = content;
+                Log("Post-transfer SQL initialized from DefaultValues.ini");
+            }
         }
 
         private void LnkMsDocumentation_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
