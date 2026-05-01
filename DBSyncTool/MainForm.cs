@@ -671,6 +671,15 @@ namespace DBSyncTool
 
         private async void BtnPrepareTableList_Click(object sender, EventArgs e)
         {
+            var duplicates = GetStrategyDuplicates(txtStrategyOverrides.Text);
+            if (duplicates.Count > 0)
+            {
+                MessageBox.Show(
+                    $"Duplicate tables in Per-Table Strategy:\n\n{string.Join(", ", duplicates)}\n\nFix duplicates before discovering tables.",
+                    "Duplicate Strategy Entries", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
             await ExecuteOperationAsync(async () =>
             {
                 SaveConfigurationFromUI();
@@ -2094,6 +2103,53 @@ namespace DBSyncTool
 
             _tablesBindingList.RaiseListChangedEvents = true;
             _tablesBindingList.ResetBindings();
+        }
+
+        private void BtnSortStrategies_Click(object sender, EventArgs e)
+        {
+            var text = txtStrategyOverrides.Text;
+            if (string.IsNullOrWhiteSpace(text)) return;
+
+            var sorted = text
+                .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(l => l.Trim())
+                .Where(l => l.Length > 0)
+                .OrderBy(GetStrategyTableName, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            txtStrategyOverrides.Text = string.Join(Environment.NewLine, sorted);
+
+            try
+            {
+                SaveConfigurationFromUI();
+                _configManager.SaveConfiguration(_currentConfig);
+            }
+            catch (Exception ex)
+            {
+                Log($"Sort applied but config save failed: {ex.Message}");
+            }
+        }
+
+        private static string GetStrategyTableName(string line)
+        {
+            var l = line.Trim();
+            if (l.EndsWith(" -truncate", StringComparison.OrdinalIgnoreCase))
+                l = l.Substring(0, l.Length - 10).Trim();
+            return l.Split('|')[0].Trim();
+        }
+
+        private static List<string> GetStrategyDuplicates(string text)
+        {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var duplicates = new List<string>();
+            if (string.IsNullOrWhiteSpace(text)) return duplicates;
+            foreach (var line in text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var name = GetStrategyTableName(line);
+                if (!string.IsNullOrEmpty(name) && !seen.Add(name))
+                    duplicates.Add(name);
+            }
+            return duplicates;
         }
     }
 }

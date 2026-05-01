@@ -53,6 +53,7 @@ namespace DBSyncTool
 
             grpCol3 = new GroupBox();
             lblStrategyOverrides = new Label();
+            btnSortStrategies = new Button();
             txtStrategyOverrides = new TextBox();
 
             grpCol4 = new GroupBox();
@@ -345,6 +346,7 @@ namespace DBSyncTool
 
             // Column 3: Copy strategy
             grpCol3.Controls.Add(lblStrategyOverrides);
+            grpCol3.Controls.Add(btnSortStrategies);
             grpCol3.Controls.Add(txtStrategyOverrides);
             grpCol3.Location = new Point(700, 10);
             grpCol3.Name = "grpCol3";
@@ -380,6 +382,13 @@ namespace DBSyncTool
                 "  VENDTABLE|5000 -truncate\n\n" +
                 "Examples with optimization:\n" +
                 "  INVENTDIM|50000|sql:SELECT * FROM INVENTDIM WHERE DATAAREAID='1000' AND @sysRowVersionFilter ORDER BY RecId DESC");
+
+            btnSortStrategies.Text = "S";
+            btnSortStrategies.Location = new Point(150, 21);
+            btnSortStrategies.Size = new Size(25, 20);
+            btnSortStrategies.Name = "btnSortStrategies";
+            tooltip.SetToolTip(btnSortStrategies, "Sort strategies alphabetically by table name and save config");
+            btnSortStrategies.Click += BtnSortStrategies_Click;
 
             txtStrategyOverrides.Location = new Point(10, 45);
             txtStrategyOverrides.Multiline = true;
@@ -1092,6 +1101,7 @@ namespace DBSyncTool
 
         private GroupBox grpCol3;
         private Label lblStrategyOverrides;
+        private Button btnSortStrategies;
         private TextBox txtStrategyOverrides;
 
         private GroupBox grpCol4;
