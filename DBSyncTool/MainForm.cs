@@ -24,7 +24,7 @@ namespace DBSyncTool
 
             // Initialize timer for UI updates
             _updateTimer = new System.Windows.Forms.Timer();
-            _updateTimer.Interval = 3000;
+            _updateTimer.Interval = 5000;
             _updateTimer.Tick += UpdateTimer_Tick;
 
             InitializeDataGrid();
@@ -276,8 +276,12 @@ namespace DBSyncTool
                 DataPropertyName = "Error",
                 HeaderText = "Error",
                 Name = "Error",
-                Width = 200,
-                AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
+                Width = 400,
+                MinimumWidth = 200,
+                // Fixed width (not Fill): with many fixed columns that already overflow the grid,
+                // a Fill column collapses to its minimum width and becomes unreachable. A real
+                // width keeps the Error text visible when scrolling right.
+                AutoSizeMode = DataGridViewAutoSizeColumnMode.None,
                 SortMode = DataGridViewColumnSortMode.Automatic
             });
         }
@@ -539,6 +543,18 @@ namespace DBSyncTool
             if (InvokeRequired)
             {
                 BeginInvoke(new Action<List<TableInfo>>(UpdateTablesGrid), tables);
+                return;
+            }
+
+            // Fast path (used during execution): the set of rows is unchanged, only the values
+            // on the existing TableInfo objects were mutated. Repaint in place instead of
+            // rebuilding the binding list, so the user's selection, scroll position and sort are
+            // preserved and the grid stays navigable. Rebuilding would reset all of those every tick.
+            if (_tablesBindingList.Count == tables.Count &&
+                new HashSet<TableInfo>(_tablesBindingList).SetEquals(tables))
+            {
+                dgvTables.Invalidate();
+                UpdateSummary(tables);
                 return;
             }
 
