@@ -11,6 +11,11 @@ namespace DBSyncTool.Services
         private const int DELETE_BATCH_SIZE = 5000;
         public const int SEQUENCE_GAP = 10000;
 
+        // Enable/disable-trigger DDL acquires a schema lock. On a live AxDB another session can
+        // hold a lock on the table, which would block the ALTER. Cap it so a worker can never
+        // hang forever on trigger toggling (the insert itself still uses the configured timeout).
+        private const int TriggerCommandTimeoutSeconds = 120;
+
         private readonly ConnectionSettings _connectionSettings;
         private readonly string _connectionString;
         private readonly Action<string> _logger;
@@ -237,7 +242,7 @@ namespace DBSyncTool.Services
                 // Step 1: Disable triggers (BEFORE any DELETE or INSERT operations)
                 string disableTriggersSql = $"ALTER TABLE [{tableInfo.TableName}] DISABLE TRIGGER ALL";
                 _logger($"[AxDB SQL] {disableTriggersSql}");
-                await ExecuteNonQueryAsync(disableTriggersSql, connection, null);
+                await ExecuteNonQueryAsync(disableTriggersSql, connection, null, cancellationToken, TriggerCommandTimeoutSeconds);
 
                 // Step 2: Delete existing records
                 var deleteStopwatch = Stopwatch.StartNew();
@@ -291,7 +296,7 @@ namespace DBSyncTool.Services
                 // Step 4: Enable triggers (always, even if errors occur)
                 string enableTriggersSql = $"ALTER TABLE [{tableInfo.TableName}] ENABLE TRIGGER ALL";
                 _logger($"[AxDB SQL] {enableTriggersSql}");
-                await ExecuteNonQueryAsync(enableTriggersSql, connection, null);
+                await ExecuteNonQueryAsync(enableTriggersSql, connection, null, cancellationToken, TriggerCommandTimeoutSeconds);
 
                 // Step 5: Update sequence
                 await UpdateSequenceAsync(tableInfo, connection, null, cancellationToken);
@@ -305,10 +310,13 @@ namespace DBSyncTool.Services
             }
             catch
             {
-                // Always try to re-enable triggers on error
+                // Always try to re-enable triggers on error. Use CancellationToken.None so this
+                // still runs when the operation was cancelled, but keep a finite timeout so it
+                // cannot hang the worker.
                 try
                 {
-                    await ExecuteNonQueryAsync($"ALTER TABLE [{tableInfo.TableName}] ENABLE TRIGGER ALL", connection, null);
+                    await ExecuteNonQueryAsync($"ALTER TABLE [{tableInfo.TableName}] ENABLE TRIGGER ALL", connection, null,
+                        CancellationToken.None, TriggerCommandTimeoutSeconds);
                 }
                 catch
                 {
@@ -452,11 +460,18 @@ namespace DBSyncTool.Services
         /// <summary>
         /// Executes a non-query command
         /// </summary>
-        private async Task ExecuteNonQueryAsync(string query, SqlConnection connection, SqlTransaction? transaction)
+        private async Task ExecuteNonQueryAsync(string query, SqlConnection connection, SqlTransaction? transaction,
+            CancellationToken cancellationToken, int? commandTimeoutOverride = null)
         {
             using var command = new SqlCommand(query, connection, transaction);
-            command.CommandTimeout = _connectionSettings.CommandTimeout;
-            await command.ExecuteNonQueryAsync();
+            command.CommandTimeout = commandTimeoutOverride ?? _connectionSettings.CommandTimeout;
+
+            // Register the token to physically abort the in-flight command (e.g. a DDL ALTER
+            // blocked on a schema lock) so Stop can interrupt it and the worker can exit.
+            using (cancellationToken.Register(() => { try { command.Cancel(); } catch { /* best-effort */ } }))
+            {
+                await command.ExecuteNonQueryAsync(cancellationToken);
+            }
         }
 
         /// <summary>
@@ -1005,15 +1020,19 @@ namespace DBSyncTool.Services
         public async Task<byte[]?> GetMaxTimestampAsync(
             string tableName,
             SqlConnection connection,
-            SqlTransaction? transaction)
+            SqlTransaction? transaction,
+            CancellationToken cancellationToken)
         {
             string sql = $"SELECT MAX(SysRowVersion) FROM [{tableName}]";
 
             using var command = new SqlCommand(sql, connection, transaction);
             command.CommandTimeout = _connectionSettings.CommandTimeout;
 
-            var result = await command.ExecuteScalarAsync();
-            return result as byte[];
+            using (cancellationToken.Register(() => { try { command.Cancel(); } catch { /* best-effort */ } }))
+            {
+                var result = await command.ExecuteScalarAsync(cancellationToken);
+                return result as byte[];
+            }
         }
 
         /// <summary>

@@ -786,7 +786,7 @@ namespace DBSyncTool.Services
             // Update timestamps on success
             using var connection = new SqlConnection(_axDbService.GetConnectionString());
             await connection.OpenAsync(cancellationToken);
-            byte[]? axdbMaxTimestamp = await _axDbService.GetMaxTimestampAsync(table.TableName, connection, null);
+            byte[]? axdbMaxTimestamp = await _axDbService.GetMaxTimestampAsync(table.TableName, connection, null, cancellationToken);
 
             if (axdbMaxTimestamp != null)
             {
@@ -852,7 +852,7 @@ namespace DBSyncTool.Services
                     table.Status = TableStatus.Inserted;
 
                     // Still update timestamps to current max
-                    byte[]? axdbMaxTimestamp = await _axDbService.GetMaxTimestampAsync(table.TableName, readConnection, null);
+                    byte[]? axdbMaxTimestamp = await _axDbService.GetMaxTimestampAsync(table.TableName, readConnection, null, cancellationToken);
                     byte[] effectiveAxdb = axdbMaxTimestamp ?? tier2MaxTimestamp;
                     _timestampManager.SetTimestamps(table.TableName, tier2MaxTimestamp, effectiveAxdb);
                     _logger($"[{table.TableName}] Timestamps saved: Tier2={TimestampHelper.ToHexString(tier2MaxTimestamp)}, AxDB={TimestampHelper.ToHexString(effectiveAxdb)}");
@@ -1020,7 +1020,7 @@ namespace DBSyncTool.Services
                 transaction.Commit();
 
                 // Update timestamps
-                byte[]? axdbMaxTimestamp = await _axDbService.GetMaxTimestampAsync(table.TableName, connection, null);
+                byte[]? axdbMaxTimestamp = await _axDbService.GetMaxTimestampAsync(table.TableName, connection, null, cancellationToken);
                 if (axdbMaxTimestamp != null)
                 {
                     _timestampManager.SetTimestamps(table.TableName, tier2MaxTimestamp, axdbMaxTimestamp);
@@ -1178,7 +1178,7 @@ namespace DBSyncTool.Services
                             .Where(ts => ts != null)
                             .Max(new TimestampComparer());
 
-                        byte[]? axdbMaxTs = await _axDbService.GetMaxTimestampAsync(table.TableName, connection, null);
+                        byte[]? axdbMaxTs = await _axDbService.GetMaxTimestampAsync(table.TableName, connection, null, cancellationToken);
 
                         if (tier2MaxTs != null && axdbMaxTs != null)
                         {
