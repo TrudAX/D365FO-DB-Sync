@@ -184,7 +184,7 @@ namespace DBSyncTool.Services
 
             await connection.OpenAsync(cancellationToken);
             using var adapter = new SqlDataAdapter(command);
-            adapter.Fill(dataTable);
+            FillCancellable(adapter, command, dataTable, cancellationToken);
 
             return dataTable;
         }
@@ -204,7 +204,7 @@ namespace DBSyncTool.Services
 
             await connection.OpenAsync(cancellationToken);
             using var adapter = new SqlDataAdapter(command);
-            adapter.Fill(dataTable);
+            FillCancellable(adapter, command, dataTable, cancellationToken);
 
             return dataTable;
         }
@@ -249,7 +249,7 @@ namespace DBSyncTool.Services
             await connection.OpenAsync(cancellationToken);
 
             using var adapter = new SqlDataAdapter(command);
-            adapter.Fill(dataTable);
+            FillCancellable(adapter, command, dataTable, cancellationToken);
 
             return dataTable;
         }
@@ -307,7 +307,7 @@ namespace DBSyncTool.Services
             await connection.OpenAsync(cancellationToken);
 
             using var adapter = new SqlDataAdapter(command);
-            adapter.Fill(dataTable);
+            FillCancellable(adapter, command, dataTable, cancellationToken);
 
             return dataTable;
         }
@@ -325,9 +325,35 @@ namespace DBSyncTool.Services
 
             await connection.OpenAsync(cancellationToken);
             using var adapter = new SqlDataAdapter(command);
-            adapter.Fill(dataTable);
+            FillCancellable(adapter, command, dataTable, cancellationToken);
 
             return dataTable;
+        }
+
+        /// <summary>
+        /// Runs the synchronous SqlDataAdapter.Fill while honoring the cancellation token.
+        /// SqlDataAdapter.Fill blocks the thread and cannot be cancelled directly, so we
+        /// register the token to call SqlCommand.Cancel(), which aborts the in-flight query
+        /// on the server. This makes a blocked Fill() return immediately when Stop is pressed,
+        /// without converting the load logic to async reader-based methods.
+        /// </summary>
+        private static void FillCancellable(SqlDataAdapter adapter, SqlCommand command, DataTable dataTable, CancellationToken cancellationToken)
+        {
+            using (cancellationToken.Register(() =>
+            {
+                try { command.Cancel(); } catch { /* best-effort cancel; ignore if already finished */ }
+            }))
+            {
+                try
+                {
+                    adapter.Fill(dataTable);
+                }
+                catch (SqlException) when (cancellationToken.IsCancellationRequested)
+                {
+                    // Fill was aborted by command.Cancel() - surface as cancellation
+                    throw new OperationCanceledException(cancellationToken);
+                }
+            }
         }
 
         /// <summary>

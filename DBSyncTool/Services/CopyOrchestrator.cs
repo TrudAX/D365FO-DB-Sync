@@ -271,6 +271,7 @@ namespace DBSyncTool.Services
         {
             _cancellationTokenSource = new CancellationTokenSource();
             var cancellationToken = _cancellationTokenSource.Token;
+            var cts = _cancellationTokenSource;  // capture for auto-stop on failure
 
             try
             {
@@ -314,6 +315,16 @@ namespace DBSyncTool.Services
                         else
                         {
                             Interlocked.Increment(ref failed);
+
+                            // Auto-stop: cancel the entire run on the first table failure so
+                            // workers stop pulling new tables instead of churning through the
+                            // remaining queue (e.g. when the AxDB transaction log is full).
+                            // Remaining queued tables stay Pending; failed ones can be retried.
+                            if (!cancellationToken.IsCancellationRequested)
+                            {
+                                _logger($"Auto-stopping run: {table.TableName} failed ({table.Status}: {table.Error}). Cancelling remaining tables.");
+                                cts.Cancel();
+                            }
                         }
 
                         // Calculate progress using pre-computed values (O(1) instead of O(n))
@@ -371,6 +382,7 @@ namespace DBSyncTool.Services
         {
             _cancellationTokenSource = new CancellationTokenSource();
             var cancellationToken = _cancellationTokenSource.Token;
+            var cts = _cancellationTokenSource;  // capture for auto-stop on failure
 
             try
             {
@@ -424,9 +436,20 @@ namespace DBSyncTool.Services
                         await ProcessSingleTableAsync(table, cancellationToken);
 
                         if (table.Status == TableStatus.Inserted)
+                        {
                             Interlocked.Increment(ref completed);
+                        }
                         else
+                        {
                             Interlocked.Increment(ref failed);
+
+                            // Auto-stop the retry run on the first failure (e.g. log still full)
+                            if (!cancellationToken.IsCancellationRequested)
+                            {
+                                _logger($"Auto-stopping retry: {table.TableName} failed ({table.Status}: {table.Error}). Cancelling remaining tables.");
+                                cts.Cancel();
+                            }
+                        }
 
                         OnStatusUpdated($"Retry Failed - {completed + failed}/{totalCount} tables");
                         OnTablesUpdated();
