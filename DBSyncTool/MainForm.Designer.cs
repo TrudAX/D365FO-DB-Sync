@@ -512,7 +512,7 @@ namespace DBSyncTool
 
             txtTier2ServerDb.Location = new Point(160, 67);
             txtTier2ServerDb.Name = "txtTier2ServerDb";
-            txtTier2ServerDb.Size = new Size(600, 23);
+            txtTier2ServerDb.Size = new Size(750, 23);
 
             // Parse Connection String button (paste icon)
             btnParseTier2ConnString.Location = new Point(160, 45);
@@ -566,39 +566,39 @@ namespace DBSyncTool
             // AxDB Settings
             lblAxDb.AutoSize = true;
             lblAxDb.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
-            lblAxDb.Location = new Point(800, 15);
+            lblAxDb.Location = new Point(930, 15);
             lblAxDb.Text = "AxDB Settings";
 
             lblAxDbServerDb.AutoSize = true;
-            lblAxDbServerDb.Location = new Point(800, 40);
+            lblAxDbServerDb.Location = new Point(930, 40);
             lblAxDbServerDb.Text = "Server\\Database:";
 
-            txtAxDbServerDb.Location = new Point(950, 37);
+            txtAxDbServerDb.Location = new Point(1080, 37);
             txtAxDbServerDb.Name = "txtAxDbServerDb";
             txtAxDbServerDb.Size = new Size(180, 23);
 
             lblAxDbUsername.AutoSize = true;
-            lblAxDbUsername.Location = new Point(800, 70);
+            lblAxDbUsername.Location = new Point(930, 70);
             lblAxDbUsername.Text = "Username:";
 
-            txtAxDbUsername.Location = new Point(950, 67);
+            txtAxDbUsername.Location = new Point(1080, 67);
             txtAxDbUsername.Name = "txtAxDbUsername";
             txtAxDbUsername.Size = new Size(180, 23);
 
             lblAxDbPassword.AutoSize = true;
-            lblAxDbPassword.Location = new Point(800, 100);
+            lblAxDbPassword.Location = new Point(930, 100);
             lblAxDbPassword.Text = "Password:";
 
-            txtAxDbPassword.Location = new Point(950, 97);
+            txtAxDbPassword.Location = new Point(1080, 97);
             txtAxDbPassword.Name = "txtAxDbPassword";
             txtAxDbPassword.PasswordChar = '*';
             txtAxDbPassword.Size = new Size(180, 23);
 
             lblAxDbCmdTimeout.AutoSize = true;
-            lblAxDbCmdTimeout.Location = new Point(800, 130);
+            lblAxDbCmdTimeout.Location = new Point(930, 130);
             lblAxDbCmdTimeout.Text = "Command Timeout (s):";
 
-            nudAxDbCmdTimeout.Location = new Point(950, 128);
+            nudAxDbCmdTimeout.Location = new Point(1080, 128);
             nudAxDbCmdTimeout.Maximum = 3600;
             nudAxDbCmdTimeout.Minimum = 0;
             nudAxDbCmdTimeout.Name = "nudAxDbCmdTimeout";
