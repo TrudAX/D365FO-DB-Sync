@@ -337,6 +337,10 @@ namespace DBSyncTool
             chkExecutePostTransferActions.Checked = _currentConfig.ExecutePostTransferActions;
             txtStrategyOverrides.Text = _currentConfig.StrategyOverrides;
 
+            // System tables
+            chkCopySystemTables.Checked = _currentConfig.CopySystemTables;
+            txtSystemTables.Text = _currentConfig.SystemTables;
+
             // Post-Transfer SQL Scripts
             txtPostTransferSql.Text = _currentConfig.PostTransferSqlScripts;
             chkExecutePostTransferAuto.Checked = _currentConfig.ExecutePostTransferAuto;
@@ -357,6 +361,12 @@ namespace DBSyncTool
             if (string.IsNullOrWhiteSpace(_currentConfig.SystemExcludedTables))
             {
                 InitializeSystemExcludedTables();
+            }
+
+            // Initialize system tables if empty (new configuration)
+            if (string.IsNullOrWhiteSpace(_currentConfig.SystemTables))
+            {
+                InitializeSystemTables();
             }
         }
 
@@ -392,6 +402,10 @@ namespace DBSyncTool
             _currentConfig.TruncateAllTables = chkTruncateAll.Checked;
             _currentConfig.ExecutePostTransferActions = chkExecutePostTransferActions.Checked;
             _currentConfig.StrategyOverrides = txtStrategyOverrides.Text;
+
+            // System tables
+            _currentConfig.CopySystemTables = chkCopySystemTables.Checked;
+            _currentConfig.SystemTables = txtSystemTables.Text;
 
             // Post-Transfer SQL Scripts
             _currentConfig.PostTransferSqlScripts = txtPostTransferSql.Text;
@@ -743,21 +757,45 @@ namespace DBSyncTool
                 return;
             }
 
-            var selectedRow = dgvTables.SelectedRows[0];
-            var tableInfo = selectedRow.DataBoundItem as TableInfo;
+            // Collect all selected tables. DataGridView returns SelectedRows in reverse
+            // (last-clicked first), so order by display index to process top-to-bottom.
+            var selectedTables = dgvTables.SelectedRows
+                .Cast<DataGridViewRow>()
+                .OrderBy(r => r.Index)
+                .Select(r => r.DataBoundItem as TableInfo)
+                .Where(t => t != null)
+                .Select(t => t!.TableName)
+                .ToList();
 
-            if (tableInfo == null)
+            if (selectedTables.Count == 0)
             {
                 return;
             }
 
             await ExecuteOperationAsync(async () =>
             {
-                if (_orchestrator != null)
+                if (_orchestrator == null)
+                    return;
+
+                // Save current configuration from UI to apply latest strategy settings
+                SaveConfigurationFromUI();
+
+                Log($"Processing {selectedTables.Count} selected table(s)...");
+
+                for (int i = 0; i < selectedTables.Count; i++)
                 {
-                    // Save current configuration from UI to apply latest strategy settings
-                    SaveConfigurationFromUI();
-                    await _orchestrator.ProcessSingleTableByNameAsync(tableInfo.TableName);
+                    string tableName = selectedTables[i];
+                    await _orchestrator.ProcessSingleTableByNameAsync(tableName);
+
+                    // Stop on the first failure so the user can fix and retry
+                    var table = _orchestrator.GetTables()
+                        .FirstOrDefault(t => t.TableName.Equals(tableName, StringComparison.OrdinalIgnoreCase));
+                    if (table != null &&
+                        (table.Status == TableStatus.FetchError || table.Status == TableStatus.InsertError))
+                    {
+                        Log($"Stopping Process Selected: {tableName} failed ({table.Status}). {selectedTables.Count - i - 1} remaining table(s) skipped.");
+                        break;
+                    }
                 }
             });
         }
@@ -1123,6 +1161,9 @@ namespace DBSyncTool
         {
             var sql = new System.Text.StringBuilder();
 
+            if (table.StrategyType == CopyStrategyType.System)
+                return GenerateSqlForSystemTable(table);
+
             if (table.UseOptimizedMode)
                 return GenerateSqlForTableOptimized(table);
 
@@ -1162,6 +1203,34 @@ namespace DBSyncTool
             sql.AppendLine($"DECLARE @TableId INT = {table.AxDbTableId} -- AxDB TableId from SQLDICTIONARY");
             sql.AppendLine($"IF @MaxRecId > (SELECT CAST(current_value AS BIGINT) FROM sys.sequences WHERE name = 'SEQ_{table.AxDbTableId}')");
             sql.AppendLine($"    ALTER SEQUENCE [SEQ_{table.AxDbTableId}] RESTART WITH @MaxRecId + {AxDbDataService.SEQUENCE_GAP}");
+
+            return sql.ToString();
+        }
+
+        private string GenerateSqlForSystemTable(TableInfo table)
+        {
+            var sql = new System.Text.StringBuilder();
+
+            sql.AppendLine("-- ============================================");
+            sql.AppendLine($"-- Table: {table.TableName}");
+            sql.AppendLine($"-- Strategy: {table.StrategyDisplay}");
+            sql.AppendLine($"-- Mode: System (full TRUNCATE + insert; copy strategies ignored)");
+            sql.AppendLine("-- ============================================");
+            sql.AppendLine();
+
+            sql.AppendLine("-- === SOURCE QUERY (Tier2) ===");
+            sql.AppendLine(string.IsNullOrEmpty(table.FetchSql)
+                ? $"SELECT * FROM [{table.TableName}]"
+                : table.FetchSql);
+            sql.AppendLine();
+
+            sql.AppendLine("-- === CLEANUP (AxDB) ===");
+            sql.AppendLine($"TRUNCATE TABLE [{table.TableName}]  -- falls back to DELETE FROM if referenced by FK/view");
+            sql.AppendLine();
+
+            sql.AppendLine("-- === INSERT ===");
+            sql.AppendLine("-- SqlBulkCopy will be used to insert all fetched records");
+            sql.AppendLine("-- No sequence update (System tables are not RecId/sequence based)");
 
             return sql.ToString();
         }
@@ -1697,6 +1766,16 @@ namespace DBSyncTool
             }
         }
 
+        private void InitializeSystemTables()
+        {
+            var content = LoadDefaultSection("SystemTables");
+            if (content != null)
+            {
+                txtSystemTables.Text = content;
+                _currentConfig.SystemTables = content;
+            }
+        }
+
         private string? LoadDefaultSection(string sectionName)
         {
             var filePath = Helpers.DefaultValuesHelper.GetDefaultFilePath();
@@ -1728,6 +1807,31 @@ namespace DBSyncTool
                 txtSystemExcludedTables.Text = content;
                 _currentConfig.SystemExcludedTables = content;
                 Log("System excluded tables initialized from DefaultValues.ini");
+            }
+        }
+
+        private void BtnInitSystemTables_Click(object sender, EventArgs e)
+        {
+            var filePath = Helpers.DefaultValuesHelper.GetDefaultFilePath();
+            if (!File.Exists(filePath))
+            {
+                MessageBox.Show("DefaultValues.ini not found.", "Init", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            var content = Helpers.DefaultValuesHelper.ReadSection(filePath, "SystemTables");
+            if (content == null)
+            {
+                MessageBox.Show("Section [SystemTables] not found in DefaultValues.ini.", "Init", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            var result = MessageBox.Show("Overwrite System Tables from DefaultValues.ini?", "Init", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            if (result == DialogResult.Yes)
+            {
+                txtSystemTables.Text = content;
+                _currentConfig.SystemTables = content;
+                Log("System tables initialized from DefaultValues.ini");
             }
         }
 

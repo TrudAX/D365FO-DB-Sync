@@ -97,6 +97,127 @@ namespace DBSyncTool.Services
         }
 
         /// <summary>
+        /// Gets row count / size info for many tables in one query directly from SQL Server
+        /// metadata (no SQLDICTIONARY). Used for System tables that may be absent from
+        /// SQLDICTIONARY. Returned dictionary is keyed by UPPER table name; tables that do
+        /// not exist are simply absent from the result.
+        /// </summary>
+        public async Task<Dictionary<string, (long RowCount, decimal SizeGB, long BytesPerRow)>> GetSystemTablesInfoAsync(IEnumerable<string> tableNames)
+        {
+            var result = new Dictionary<string, (long, decimal, long)>(StringComparer.OrdinalIgnoreCase);
+            var names = tableNames.Select(n => n.ToUpper()).Distinct().ToList();
+            if (names.Count == 0)
+                return result;
+
+            using var connection = new SqlConnection(_connectionString);
+            using var command = new SqlCommand(string.Empty, connection);
+            string inClause = BuildInClause(command, names);
+
+            command.CommandText = $@"
+                SELECT
+                    o.name AS TableName,
+                    MAX(s.row_count) AS [RowCount],
+                    SUM(s.reserved_page_count) * 8.0 / (1024 * 1024) AS [SizeGB],
+                    CASE
+                        WHEN MAX(s.row_count) > 0
+                        THEN (8 * 1024 * SUM(s.reserved_page_count)) / MAX(s.row_count)
+                        ELSE 0
+                    END AS [BytesPerRow]
+                FROM sys.dm_db_partition_stats s
+                INNER JOIN sys.objects o ON o.object_id = s.object_id
+                WHERE o.type = 'U'
+                  AND SCHEMA_NAME(o.schema_id) = 'dbo'
+                  AND UPPER(o.name) IN ({inClause})
+                GROUP BY o.name";
+            command.CommandTimeout = _connectionSettings.CommandTimeout;
+
+            await connection.OpenAsync();
+            using var reader = await command.ExecuteReaderAsync();
+
+            while (await reader.ReadAsync())
+            {
+                string name = reader.GetString(0).ToUpper();
+                long rowCount = reader.GetInt64(1);
+                decimal sizeGB = reader.GetDecimal(2);
+                long bytesPerRow = reader.GetInt64(3);
+                result[name] = (rowCount, sizeGB, bytesPerRow);
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Gets the physical column names for many tables in one query from
+        /// INFORMATION_SCHEMA.COLUMNS. Used for System tables that are not present in
+        /// SQLDICTIONARY. Returned dictionary is keyed by UPPER table name, columns ordered
+        /// by ORDINAL_POSITION.
+        /// </summary>
+        public async Task<Dictionary<string, List<string>>> GetTablesColumnsAsync(IEnumerable<string> tableNames)
+        {
+            return await GetTablesColumnsAsync(_connectionString, _connectionSettings.CommandTimeout, tableNames);
+        }
+
+        /// <summary>
+        /// Shared INFORMATION_SCHEMA column lookup usable against any connection string.
+        /// </summary>
+        internal static async Task<Dictionary<string, List<string>>> GetTablesColumnsAsync(
+            string connectionString, int commandTimeout, IEnumerable<string> tableNames)
+        {
+            var result = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            var names = tableNames.Select(n => n.ToUpper()).Distinct().ToList();
+            if (names.Count == 0)
+                return result;
+
+            using var connection = new SqlConnection(connectionString);
+            using var command = new SqlCommand(string.Empty, connection);
+            string inClause = BuildInClause(command, names);
+
+            command.CommandText = $@"
+                SELECT c.TABLE_NAME, c.COLUMN_NAME
+                FROM INFORMATION_SCHEMA.COLUMNS c
+                INNER JOIN INFORMATION_SCHEMA.TABLES t
+                    ON t.TABLE_SCHEMA = c.TABLE_SCHEMA
+                   AND t.TABLE_NAME = c.TABLE_NAME
+                WHERE c.TABLE_SCHEMA = 'dbo'
+                  AND t.TABLE_TYPE = 'BASE TABLE'
+                  AND UPPER(c.TABLE_NAME) IN ({inClause})
+                ORDER BY c.TABLE_NAME, c.ORDINAL_POSITION";
+            command.CommandTimeout = commandTimeout;
+
+            await connection.OpenAsync();
+            using var reader = await command.ExecuteReaderAsync();
+
+            while (await reader.ReadAsync())
+            {
+                string table = reader.GetString(0).ToUpper();
+                string column = reader.GetString(1);
+                if (!result.TryGetValue(table, out var list))
+                {
+                    list = new List<string>();
+                    result[table] = list;
+                }
+                list.Add(column);
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Adds an @p0,@p1,... parameter set for an IN clause and returns the placeholder list.
+        /// </summary>
+        private static string BuildInClause(SqlCommand command, List<string> values)
+        {
+            var placeholders = new List<string>(values.Count);
+            for (int i = 0; i < values.Count; i++)
+            {
+                string p = "@p" + i;
+                command.Parameters.AddWithValue(p, values[i]);
+                placeholders.Add(p);
+            }
+            return string.Join(",", placeholders);
+        }
+
+        /// <summary>
         /// Gets the TableID for a table from SQLDICTIONARY
         /// </summary>
         public async Task<int?> GetTableIdAsync(string tableName)

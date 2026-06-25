@@ -48,6 +48,13 @@ namespace DBSyncTool.Models
         // MaxRecId storage for fallback mode optimization (tables without SysRowVersion)
         public string MaxTransferredRecIds { get; set; } = "";  // Multiline: TABLENAME,MaxRecId
 
+        // System tables (not in SQLDICTIONARY) to copy with full TRUNCATE + insert.
+        // Newline-separated exact table names. Honors Include/Exclude filters.
+        public string SystemTables { get; set; } = "";
+
+        // Whether to copy the System tables list during Discover/Process
+        public bool CopySystemTables { get; set; } = false;
+
         // Post-transfer SQL scripts to execute against AxDB
         public string PostTransferSqlScripts { get; set; } = "";
 

@@ -62,6 +62,14 @@ namespace DBSyncTool.Services
                 // Get inclusion patterns early to check for single table optimization
                 var inclusionPatterns = GetPatterns(_config.TablesToInclude);
 
+                // Parse System tables list (exact names) — only when enabled. These are copied
+                // with a full TRUNCATE + insert even if absent from SQLDICTIONARY.
+                var systemTableNames = _config.CopySystemTables
+                    ? new HashSet<string>(
+                        GetPatterns(_config.SystemTables).Select(n => n.ToUpper()),
+                        StringComparer.OrdinalIgnoreCase)
+                    : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
                 // Optimization: If only one specific table (no wildcard), pass it to discovery queries
                 string? specificTableName = null;
                 if (inclusionPatterns.Count == 1 && !inclusionPatterns[0].Contains("*"))
@@ -104,6 +112,10 @@ namespace DBSyncTool.Services
                 foreach (var (tableName, rowCount, sizeGB, bytesPerRow) in discoveredTables)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
+
+                    // Skip tables handled separately as System tables (full TRUNCATE + insert)
+                    if (systemTableNames.Contains(tableName))
+                        continue;
 
                     // Apply inclusion patterns
                     if (!MatchesAnyPattern(tableName, inclusionPatterns))
@@ -243,6 +255,60 @@ namespace DBSyncTool.Services
                     processed++;
                 }
 
+                // ========== SYSTEM TABLES (full TRUNCATE + insert, may be absent from SQLDICTIONARY) ==========
+                if (systemTableNames.Count > 0)
+                {
+                    _logger("─────────────────────────────────────────────");
+                    _logger($"Processing {systemTableNames.Count} system table(s)...");
+
+                    // Apply Include/Exclude filters first (just like normal tables)
+                    var systemCandidates = new List<string>();
+                    foreach (var tableName in systemTableNames)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+
+                        if (!MatchesAnyPattern(tableName, inclusionPatterns))
+                        {
+                            _logger($"[System] {tableName}: skipped (does not match Tables to Include)");
+                            skipped++;
+                            continue;
+                        }
+                        if (MatchesAnyPattern(tableName, exclusionPatterns))
+                        {
+                            _logger($"[System] {tableName}: skipped (matched exclusion pattern)");
+                            skipped++;
+                            continue;
+                        }
+                        systemCandidates.Add(tableName);
+                    }
+
+                    if (systemCandidates.Count > 0)
+                    {
+                        // Batch-fetch all metadata in a few queries instead of per-table round-trips
+                        // (Tier2 is Azure SQL — per-table queries were ~2s each).
+                        var sysInfoMap = await _tier2Service.GetSystemTablesInfoAsync(systemCandidates);
+                        var tier2ColsMap = await _tier2Service.GetTablesColumnsAsync(systemCandidates);
+                        var axDbColsMap = await _axDbService.GetTablesColumnsAsync(systemCandidates);
+
+                        foreach (var tableName in systemCandidates)
+                        {
+                            cancellationToken.ThrowIfCancellationRequested();
+
+                            var systemInfo = BuildSystemTableInfo(tableName, sysInfoMap, tier2ColsMap, axDbColsMap);
+                            if (systemInfo == null)
+                            {
+                                skipped++;
+                                continue;
+                            }
+
+                            lock (_tablesLock) _tables.Add(systemInfo);
+
+                            if (systemInfo.Status == TableStatus.Pending)
+                                processed++;
+                        }
+                    }
+                }
+
                 // Calculate total estimated size
                 decimal totalEstimatedMB = _tables.Sum(t => t.EstimatedSizeMB);
 
@@ -261,6 +327,78 @@ namespace DBSyncTool.Services
                 OnStatusUpdated($"Error: {ex.Message}");
                 throw;
             }
+        }
+
+        /// <summary>
+        /// Builds a TableInfo for a System table (full TRUNCATE + insert) from pre-fetched
+        /// metadata maps. Validates that the table exists in Tier2 and AxDB and that their
+        /// column sets are identical. On any failure the returned TableInfo carries an error
+        /// status so it is visible in the grid.
+        /// </summary>
+        private TableInfo? BuildSystemTableInfo(
+            string tableName,
+            Dictionary<string, (long RowCount, decimal SizeGB, long BytesPerRow)> sysInfoMap,
+            Dictionary<string, List<string>> tier2ColsMap,
+            Dictionary<string, List<string>> axDbColsMap)
+        {
+            // 1. Verify the table exists in Tier2. If not (e.g. typo or non-dbo table), there is
+            // nothing to copy — skip it entirely rather than cluttering the grid with an error.
+            if (!sysInfoMap.TryGetValue(tableName, out var tier2Info))
+            {
+                _logger($"[System] {tableName}: not found in Tier2 (skipped)");
+                return null;
+            }
+
+            var info = new TableInfo
+            {
+                TableName = tableName,
+                StrategyType = CopyStrategyType.System,
+                UseTruncate = true,
+                Status = TableStatus.Pending
+            };
+
+            info.Tier2RowCount = tier2Info.RowCount;
+            info.Tier2SizeGB = tier2Info.SizeGB;
+            info.BytesPerRow = tier2Info.BytesPerRow;
+            info.RecordsToCopy = tier2Info.RowCount;            // whole table is copied
+            info.EstimatedSizeMB = tier2Info.SizeGB * 1024m;    // full table size
+
+            // 2. Get columns from both databases (INFORMATION_SCHEMA, not SQLDICTIONARY)
+            var tier2Columns = tier2ColsMap.TryGetValue(tableName, out var t2c) ? t2c : new List<string>();
+            var axDbColumns = axDbColsMap.TryGetValue(tableName, out var axc) ? axc : new List<string>();
+
+            if (axDbColumns.Count == 0)
+            {
+                info.Status = TableStatus.FetchError;
+                info.Error = "Table not found in AxDB";
+                _logger($"[System] {tableName}: not found in AxDB (skipped)");
+                return info;
+            }
+
+            // 3. Require identical schema between Tier2 and AxDB
+            var tier2Set = new HashSet<string>(tier2Columns, StringComparer.OrdinalIgnoreCase);
+            var axDbSet = new HashSet<string>(axDbColumns, StringComparer.OrdinalIgnoreCase);
+            var onlyTier2 = tier2Set.Except(axDbSet, StringComparer.OrdinalIgnoreCase).ToList();
+            var onlyAxDb = axDbSet.Except(tier2Set, StringComparer.OrdinalIgnoreCase).ToList();
+
+            if (onlyTier2.Count > 0 || onlyAxDb.Count > 0)
+            {
+                var parts = new List<string>();
+                if (onlyTier2.Count > 0) parts.Add($"Tier2-only: {string.Join(",", onlyTier2)}");
+                if (onlyAxDb.Count > 0) parts.Add($"AxDB-only: {string.Join(",", onlyAxDb)}");
+                info.Status = TableStatus.FetchError;
+                info.Error = "Schema mismatch — " + string.Join("; ", parts);
+                _logger($"[System] {tableName}: {info.Error}");
+                return info;
+            }
+
+            // Identical schema: copy all columns (Tier2 ordering)
+            info.CopyableFields = tier2Columns;
+            string fieldList = string.Join(", ", tier2Columns.Select(f => $"[{f}]"));
+            info.FetchSql = $"SELECT {fieldList} FROM [{tableName}]";
+            _logger($"[System] {tableName}: {tier2Columns.Count} columns, {info.Tier2RowCount:N0} rows, {info.EstimatedSizeMB:F2} MB — full copy");
+
+            return info;
         }
 
         /// <summary>
@@ -477,8 +615,46 @@ namespace DBSyncTool.Services
         /// <summary>
         /// Re-apply copy strategy for a single table from current configuration
         /// </summary>
-        private void ReapplyStrategyForTable(TableInfo table)
+        private async Task ReapplyStrategyForTable(TableInfo table)
         {
+            // System tables: re-validate existence/schema and regenerate full-copy SQL,
+            // keeping the System strategy (never fall through to RecId/SQL parsing).
+            if (table.StrategyType == CopyStrategyType.System)
+            {
+                var names = new[] { table.TableName };
+                var sysInfoMap = await _tier2Service.GetSystemTablesInfoAsync(names);
+                var tier2ColsMap = await _tier2Service.GetTablesColumnsAsync(names);
+                var axDbColsMap = await _axDbService.GetTablesColumnsAsync(names);
+
+                var refreshed = BuildSystemTableInfo(table.TableName, sysInfoMap, tier2ColsMap, axDbColsMap);
+                if (refreshed == null)
+                {
+                    table.Status = TableStatus.FetchError;
+                    table.Error = "Table not found in Tier2";
+                    _logger($"Re-applied System strategy for {table.TableName} (not found in Tier2)");
+                    return;
+                }
+
+                table.StrategyType = CopyStrategyType.System;
+                table.UseTruncate = true;
+                table.CopyableFields = refreshed.CopyableFields;
+                table.FetchSql = refreshed.FetchSql;
+                table.Tier2RowCount = refreshed.Tier2RowCount;
+                table.Tier2SizeGB = refreshed.Tier2SizeGB;
+                table.BytesPerRow = refreshed.BytesPerRow;
+                table.RecordsToCopy = refreshed.RecordsToCopy;
+                table.EstimatedSizeMB = refreshed.EstimatedSizeMB;
+
+                if (refreshed.Status == TableStatus.FetchError)
+                {
+                    table.Status = TableStatus.FetchError;
+                    table.Error = refreshed.Error;
+                }
+
+                _logger($"Re-applied System strategy for {table.TableName}");
+                return;
+            }
+
             // Reload timestamps and MaxRecIds from config (they may have been updated)
             _logger($"[{table.TableName}] Reloading timestamps and MaxRecIds from config...");
             _timestampManager.LoadFromConfig(_config);
@@ -575,7 +751,7 @@ namespace DBSyncTool.Services
             table.MinRecId = 0;
 
             // Re-apply strategy from current configuration
-            ReapplyStrategyForTable(table);
+            await ReapplyStrategyForTable(table);
 
             // Check if strategy re-application resulted in an error
             if (table.Status == TableStatus.FetchError)
@@ -1268,6 +1444,71 @@ namespace DBSyncTool.Services
         }
 
         /// <summary>
+        /// Process a System table: fetch full data → TRUNCATE + insert all rows.
+        /// No delta comparison, RecId/sequence handling, or timestamp persistence.
+        /// </summary>
+        private async Task ProcessTableSystemModeAsync(TableInfo table, CancellationToken cancellationToken)
+        {
+            try
+            {
+                // STAGE 1: FETCH full table
+                table.Status = TableStatus.Fetching;
+                table.Error = string.Empty;
+                OnTablesUpdated();
+
+                var fetchStopwatch = Stopwatch.StartNew();
+                DataTable data = await _tier2Service.FetchDataBySqlAsync(
+                    table.TableName,
+                    table.FetchSql,
+                    cancellationToken);
+                fetchStopwatch.Stop();
+
+                table.CachedData = data;
+                table.RecordsFetched = data.Rows.Count;
+                table.RecordsToCopy = data.Rows.Count;
+                table.FetchTimeSeconds = (decimal)fetchStopwatch.Elapsed.TotalSeconds;
+
+                _logger($"[System] Fetched {table.TableName}: {table.RecordsFetched} records in {table.FetchTimeSeconds:F2}s");
+
+                cancellationToken.ThrowIfCancellationRequested();
+
+                // STAGE 2: TRUNCATE + INSERT
+                table.Status = TableStatus.Inserting;
+                OnTablesUpdated();
+
+                await _axDbService.InsertSystemTableDataAsync(table, cancellationToken);
+
+                _logger($"[System] {table.TableName}: Truncate {table.DeleteTimeSeconds:F2}s, Insert {table.InsertTimeSeconds:F2}s");
+
+                // STAGE 3: CLEANUP MEMORY (on success only)
+                table.CachedData?.Dispose();
+                table.CachedData = null;
+                table.Status = TableStatus.Inserted;
+                table.Error = string.Empty;
+
+                var totalTime = table.FetchTimeSeconds + table.DeleteTimeSeconds + table.InsertTimeSeconds;
+                _logger($"Completed {table.TableName}: Total time {totalTime:F2}s (Fetch: {table.FetchTimeSeconds:F2}s, Truncate: {table.DeleteTimeSeconds:F2}s, Insert: {table.InsertTimeSeconds:F2}s)");
+            }
+            catch (OperationCanceledException)
+            {
+                table.CachedData?.Dispose();
+                table.CachedData = null;
+                table.Status = TableStatus.FetchError;
+                table.Error = "Cancelled";
+                _logger($"Cancelled {table.TableName}");
+                throw;
+            }
+            catch (Exception ex)
+            {
+                table.CachedData?.Dispose();
+                table.CachedData = null;
+                table.Status = table.Status == TableStatus.Fetching ? TableStatus.FetchError : TableStatus.InsertError;
+                table.Error = ex.Message;
+                _logger($"ERROR processing {table.TableName}: {ex.Message}");
+            }
+        }
+
+        /// <summary>
         /// Process a single table: fetch → insert → clear memory
         /// </summary>
         private async Task ProcessSingleTableAsync(TableInfo table, CancellationToken cancellationToken)
@@ -1277,6 +1518,13 @@ namespace DBSyncTool.Services
 
             try
             {
+                // System tables: always full TRUNCATE + insert, no SQLDICTIONARY/RecId/sequence logic
+                if (table.StrategyType == CopyStrategyType.System)
+                {
+                    await ProcessTableSystemModeAsync(table, cancellationToken);
+                    return;
+                }
+
                 // Force truncate mode skips optimization - just truncate and insert
                 if (table.UseTruncate)
                 {

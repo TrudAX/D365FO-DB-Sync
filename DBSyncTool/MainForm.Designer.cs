@@ -39,8 +39,16 @@ namespace DBSyncTool
             tabControl = new TabControl();
             tabTables = new TabPage();
             tabConnection = new TabPage();
+            tabSystem = new TabPage();
             tabSavedRowValues = new TabPage();
             tabPostTransfer = new TabPage();
+
+            // System tab controls
+            chkCopySystemTables = new CheckBox();
+            lblSystemTables = new Label();
+            lblSystemTablesHelp = new Label();
+            txtSystemTables = new TextBox();
+            btnInitSystemTables = new Button();
 
             // Tables tab controls - 4 columns
             grpCol1 = new GroupBox();
@@ -167,6 +175,7 @@ namespace DBSyncTool
             tabControl.SuspendLayout();
             tabTables.SuspendLayout();
             tabConnection.SuspendLayout();
+            tabSystem.SuspendLayout();
             tabSavedRowValues.SuspendLayout();
             tabPostTransfer.SuspendLayout();
             grpCol1.SuspendLayout();
@@ -275,6 +284,7 @@ namespace DBSyncTool
             // TabControl (fills form below config)
             tabControl.Controls.Add(tabTables);
             tabControl.Controls.Add(tabConnection);
+            tabControl.Controls.Add(tabSystem);
             tabControl.Controls.Add(tabSavedRowValues);
             tabControl.Controls.Add(tabPostTransfer);
             tabControl.Location = new Point(0, 60);
@@ -654,6 +664,53 @@ namespace DBSyncTool
             chkShowExcludedTables.Text = "Display excluded tables in main grid";
             ToolTip showExcludedTooltip = new ToolTip();
             showExcludedTooltip.SetToolTip(chkShowExcludedTables, "When checked, shows tables excluded by filters (with at least 1 record) in the table list with Status=Excluded");
+
+            // System Tab
+            tabSystem.Controls.Add(chkCopySystemTables);
+            tabSystem.Controls.Add(lblSystemTables);
+            tabSystem.Controls.Add(lblSystemTablesHelp);
+            tabSystem.Controls.Add(txtSystemTables);
+            tabSystem.Controls.Add(btnInitSystemTables);
+            tabSystem.Location = new Point(4, 24);
+            tabSystem.Name = "tabSystem";
+            tabSystem.Padding = new Padding(3);
+            tabSystem.Size = new Size(1413, 804);
+            tabSystem.Text = "System";
+            tabSystem.UseVisualStyleBackColor = true;
+
+            chkCopySystemTables.AutoSize = true;
+            chkCopySystemTables.Location = new Point(10, 15);
+            chkCopySystemTables.Name = "chkCopySystemTables";
+            chkCopySystemTables.Text = "Copy system tables?";
+            chkCopySystemTables.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+            ToolTip systemTablesTooltip = new ToolTip();
+            systemTablesTooltip.SetToolTip(chkCopySystemTables, "When checked, the tables listed below are copied during Discover/Process Tables — even if absent from SQLDICTIONARY.");
+
+            lblSystemTables.AutoSize = true;
+            lblSystemTables.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+            lblSystemTables.Location = new Point(10, 45);
+            lblSystemTables.Name = "lblSystemTables";
+            lblSystemTables.Text = "System Tables";
+
+            btnInitSystemTables.Location = new Point(120, 42);
+            btnInitSystemTables.Name = "btnInitSystemTables";
+            btnInitSystemTables.Size = new Size(50, 23);
+            btnInitSystemTables.Text = "Init";
+            btnInitSystemTables.Click += BtnInitSystemTables_Click;
+
+            lblSystemTablesHelp.AutoSize = true;
+            lblSystemTablesHelp.ForeColor = Color.DimGray;
+            lblSystemTablesHelp.Location = new Point(10, 65);
+            lblSystemTablesHelp.Name = "lblSystemTablesHelp";
+            lblSystemTablesHelp.Text = "One exact table name per line. Each is fully copied (TRUNCATE + insert all rows); copy strategies are ignored.\r\nInclude/Exclude filters still apply. Tier2 and AxDB must have identical columns or the table is reported as an error.";
+
+            txtSystemTables.Location = new Point(10, 105);
+            txtSystemTables.Multiline = true;
+            txtSystemTables.Name = "txtSystemTables";
+            txtSystemTables.ScrollBars = ScrollBars.Both;
+            txtSystemTables.WordWrap = false;
+            txtSystemTables.Size = new Size(500, 680);
+            txtSystemTables.Font = new Font("Consolas", 9F);
 
             // SavedRowValues Tab
             tabSavedRowValues.Controls.Add(lblOptimization);
@@ -1036,6 +1093,8 @@ namespace DBSyncTool
             tabControl.ResumeLayout(false);
             tabTables.ResumeLayout(false);
             tabConnection.ResumeLayout(false);
+            tabSystem.ResumeLayout(false);
+            tabSystem.PerformLayout();
             tabSavedRowValues.ResumeLayout(false);
             tabSavedRowValues.PerformLayout();
             tabPostTransfer.ResumeLayout(false);
@@ -1087,8 +1146,16 @@ namespace DBSyncTool
         private TabControl tabControl;
         private TabPage tabTables;
         private TabPage tabConnection;
+        private TabPage tabSystem;
         private TabPage tabSavedRowValues;
         private TabPage tabPostTransfer;
+
+        // System Tab
+        private CheckBox chkCopySystemTables;
+        private Label lblSystemTables;
+        private Label lblSystemTablesHelp;
+        private TextBox txtSystemTables;
+        private Button btnInitSystemTables;
 
         // Tables Tab - 4 columns
         private GroupBox grpCol1;

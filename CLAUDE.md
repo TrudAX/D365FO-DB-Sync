@@ -184,7 +184,7 @@ By default, the system matches the last X records between AxDB and Tier2. For so
 1. Click **Process Tables** to start copying all discovered tables
 2. The system will copy all tables to AxDB using parallel workers
 3. Monitor progress in the log window
-4. If a table fails, use **Process Selected** (right-click menu) to retry just that table
+4. If a table fails, use **Process Selected** to retry it. Multiple rows can be selected — they are processed one-by-one top-to-bottom, stopping on the first failure
 
 **Tips:**
 - First run may take longer as it performs delta comparison
@@ -231,10 +231,11 @@ By default, the system matches the last X records between AxDB and Tier2. For so
 
 ### Copy Strategy System
 
-The tool supports two simplified strategy types defined in `Models/TableInfo.cs`:
+The tool supports three strategy types defined in `Models/TableInfo.cs`:
 
 - **RecId**: Top N records by RecId DESC (e.g., `CUSTTABLE|5000`)
 - **Sql**: Custom SQL queries with placeholders (e.g., `CUSTTABLE|sql:SELECT * FROM CUSTTABLE WHERE DATAAREAID='USMF'`)
+- **System**: Full table copy (TRUNCATE + insert all rows) for tables configured on the **System** tab — see [System Tables Copy](#system-tables-copy). Not selected via the strategy syntax below; it is assigned automatically to tables in the System list.
 
 **Strategy Syntax:**
 ```
@@ -258,6 +259,28 @@ TableName|RecordCount|sql:CustomQuery -truncate
   - Example: `INVENTDIM|50000|sql:SELECT * FROM INVENTDIM WHERE DATAAREAID='1000' AND @sysRowVersionFilter ORDER BY RecId DESC`
 
 Add `-truncate` flag to any strategy to force TRUNCATE mode before insert.
+
+### System Tables Copy
+
+D365FO has metadata/security tables that are NOT registered in SQLDICTIONARY and do not follow the standard structure (no `RecId`, no `SEQ_{TableID}` sequence, no `SysRowVersion`). The normal Discover Tables flow skips them. The **System** tab lets you copy these anyway.
+
+**Configuration** (`Models/AppConfiguration.cs`):
+- `SystemTables`: Newline-separated list of **exact** table names (no wildcards)
+- `CopySystemTables`: Master checkbox — when off, the list is ignored entirely
+
+**UI** — the **System** tab (3rd tab) holds the "Copy system tables?" checkbox, the multiline list, and an **Init** button that loads the default list from the `[SystemTables]` section of `DefaultValues.ini`. The list auto-populates from that section for new/empty configs (same pattern as System Excluded Tables).
+
+**Behavior:**
+- During **Discover Tables** (when enabled), system table names are processed after normal discovery. They are skipped in the normal loop so they are never double-added and always take System precedence.
+- **Include/Exclude filters still apply** (`TablesToInclude`, `TablesToExclude`, `SystemExcludedTables`) — a listed system table is only added if it passes Include and is not matched by Exclude.
+- Metadata comes from SQL Server directly, **not** SQLDICTIONARY: row count/size from `sys.dm_db_partition_stats`, columns from `INFORMATION_SCHEMA.COLUMNS`. All system-table metadata queries are restricted to **`dbo` base tables** so they match exactly what the unqualified `[TableName]` fetch/truncate targets (avoids false positives from non-`dbo` schemas or views).
+- To avoid per-table round-trips to Azure SQL, all metadata is **batch-fetched** in a few `... IN (@p0,@p1,…)` queries (`GetSystemTablesInfoAsync`, `GetTablesColumnsAsync`), then `TableInfo` objects are built in-memory via `BuildSystemTableInfo`.
+- **Validation** (`CopyOrchestrator.BuildSystemTableInfo`):
+  - Not found in Tier2 (`dbo`) → silently skipped (returns null), not added to the grid (typically a typo)
+  - Not found in AxDB → `FetchError` row in the grid (you must create the table first; the tool does not `CREATE TABLE`)
+  - **Identical-schema required**: Tier2 and AxDB column sets must match exactly; otherwise `FetchError` naming the differing columns
+- **Est Size(MB)** = full table size (`SizeGB × 1024`), since the entire table is copied.
+- **Processing** (`CopyOrchestrator.ProcessTableSystemModeAsync` → `AxDbDataService.InsertSystemTableDataAsync`): fetch full table → disable triggers → `TRUNCATE` (falls back to `DELETE` if FK/view-referenced) → `SqlBulkCopy` all columns → re-enable triggers. **No** delta comparison, RecId/sequence update, or timestamp persistence. Existing copy strategies are ignored for these tables.
 
 ### SQLDICTIONARY Caching
 
@@ -569,7 +592,7 @@ Used for tables without SysRowVersion OR when optimization not available:
 - Connection pool must accommodate parallel workers via connection string setting
 
 **UI-specific modifications:**
-- MainForm uses TabControl with four tabs: "Tables" (static), "Connection-{Alias}" (dynamic), "Saved Values" (timestamps/RecIds), "Post-Transfer Actions" (SQL scripts, backup, PowerShell)
+- MainForm uses TabControl with five tabs: "Tables" (static), "Connection-{Alias}" (dynamic), "System" (system tables copy — checkbox + list + Init button), "Saved Values" (timestamps/RecIds), "Post-Transfer Actions" (SQL scripts, backup, PowerShell)
 - Post-transfer execution chain: SQL scripts → Database Backup → PowerShell script (each step conditional on previous success)
 - DataGridView bound to `List<TableInfo>` via events from CopyOrchestrator
 - Context menu items: "Copy Table Name" and "Get SQL"

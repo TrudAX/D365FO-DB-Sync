@@ -98,6 +98,79 @@ namespace DBSyncTool.Services
         }
 
         /// <summary>
+        /// Gets the physical column names for many tables in one query from
+        /// INFORMATION_SCHEMA.COLUMNS. Used for System tables that are not present in
+        /// SQLDICTIONARY. Returned dictionary is keyed by UPPER table name; tables that do
+        /// not exist in AxDB are simply absent from the result.
+        /// </summary>
+        public async Task<Dictionary<string, List<string>>> GetTablesColumnsAsync(IEnumerable<string> tableNames)
+        {
+            return await Tier2DataService.GetTablesColumnsAsync(_connectionString, _connectionSettings.CommandTimeout, tableNames);
+        }
+
+        /// <summary>
+        /// Inserts data for a System table: TRUNCATE (with DELETE fallback) then bulk insert
+        /// all rows. No delta comparison, no RecId/sequence handling, no timestamps.
+        /// Triggers are disabled around the operation and always re-enabled.
+        /// </summary>
+        public async Task<int> InsertSystemTableDataAsync(TableInfo tableInfo, CancellationToken cancellationToken)
+        {
+            using var connection = new SqlConnection(_connectionString);
+            await connection.OpenAsync(cancellationToken);
+
+            // Step 1: Disable triggers (harmless if the table has none)
+            string disableTriggersSql = $"ALTER TABLE [{tableInfo.TableName}] DISABLE TRIGGER ALL";
+            _logger($"[AxDB SQL] {disableTriggersSql}");
+            await ExecuteNonQueryAsync(disableTriggersSql, connection, null, cancellationToken, TriggerCommandTimeoutSeconds);
+
+            try
+            {
+                // Step 2: Truncate (falls back to DELETE if referenced by FK/view)
+                var deleteStopwatch = Stopwatch.StartNew();
+                await TruncateWithFallbackAsync(tableInfo.TableName, connection, null, cancellationToken);
+                deleteStopwatch.Stop();
+                tableInfo.DeleteTimeSeconds = (decimal)deleteStopwatch.Elapsed.TotalSeconds;
+
+                // Step 3: Bulk insert all fetched rows
+                int rowCount = 0;
+                var insertStopwatch = Stopwatch.StartNew();
+                if (tableInfo.CachedData != null && tableInfo.CachedData.Rows.Count > 0)
+                {
+                    _logger($"[AxDB] Bulk inserting {tableInfo.CachedData.Rows.Count} rows into {tableInfo.TableName}");
+                    using var bulkCopy = new SqlBulkCopy(connection);
+                    bulkCopy.DestinationTableName = tableInfo.TableName;
+                    bulkCopy.BatchSize = 10000;
+                    bulkCopy.BulkCopyTimeout = _connectionSettings.CommandTimeout;
+
+                    foreach (DataColumn column in tableInfo.CachedData.Columns)
+                    {
+                        bulkCopy.ColumnMappings.Add(column.ColumnName, column.ColumnName);
+                    }
+
+                    await bulkCopy.WriteToServerAsync(tableInfo.CachedData, cancellationToken);
+                    rowCount = tableInfo.CachedData.Rows.Count;
+                }
+                insertStopwatch.Stop();
+                tableInfo.InsertTimeSeconds = (decimal)insertStopwatch.Elapsed.TotalSeconds;
+
+                return rowCount;
+            }
+            finally
+            {
+                // Always re-enable triggers, even on error/cancellation
+                try
+                {
+                    await ExecuteNonQueryAsync($"ALTER TABLE [{tableInfo.TableName}] ENABLE TRIGGER ALL", connection, null,
+                        CancellationToken.None, TriggerCommandTimeoutSeconds);
+                }
+                catch
+                {
+                    // Ignore errors when re-enabling triggers
+                }
+            }
+        }
+
+        /// <summary>
         /// Inserts data into a table using SqlBulkCopy
         /// Handles deletes, trigger disabling, bulk insert, trigger enabling, and sequence update
         /// </summary>

@@ -79,6 +79,9 @@ namespace DBSyncTool.Models
                     case CopyStrategyType.Sql:
                         parts.Add(RecIdCount.HasValue ? $"SQL:{RecIdCount}" : "SQL");
                         break;
+                    case CopyStrategyType.System:
+                        parts.Add("System");
+                        break;
                 }
 
                 if (UseTruncate)
@@ -94,6 +97,8 @@ namespace DBSyncTool.Models
             {
                 if (Status == TableStatus.Excluded)
                     return "None";
+                if (StrategyType == CopyStrategyType.System)
+                    return "Full";
                 if (StrategyType == CopyStrategyType.Sql)
                     return "Partial";
                 return RecordsToCopy >= Tier2RowCount ? "Full" : "Partial";
@@ -129,6 +134,7 @@ namespace DBSyncTool.Models
     public enum CopyStrategyType
     {
         RecId,  // Top N by RecId (default)
-        Sql     // Custom SQL query
+        Sql,    // Custom SQL query
+        System  // Full table copy (TRUNCATE + insert all rows) for tables not in SQLDICTIONARY
     }
 }
