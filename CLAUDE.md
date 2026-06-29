@@ -264,14 +264,15 @@ Add `-truncate` flag to any strategy to force TRUNCATE mode before insert.
 
 D365FO has metadata/security tables that are NOT registered in SQLDICTIONARY and do not follow the standard structure (no `RecId`, no `SEQ_{TableID}` sequence, no `SysRowVersion`). The normal Discover Tables flow skips them. The **System** tab lets you copy these anyway.
 
-**Configuration** (`Models/AppConfiguration.cs`):
-- `SystemTables`: Newline-separated list of **exact** table names (no wildcards)
-- `CopySystemTables`: Master checkbox — when off, the list is ignored entirely
+**Configuration** (`Models/AppConfiguration.cs`) — **three independent lists**, each with its own copy toggle:
+- `SystemTables` / `CopySystemTables` (list 1), `SystemTables2` / `CopySystemTables2` (list 2), `SystemTables3` / `CopySystemTables3` (list 3)
+- Each list is newline-separated **exact** table names (no wildcards); each `CopySystemTablesN` toggle, when off, makes that list ignored
+- List 1 keeps the original field names for backward compatibility with existing configs
 
-**UI** — the **System** tab (3rd tab) holds the "Copy system tables?" checkbox, the multiline list, and an **Init** button that loads the default list from the `[SystemTables]` section of `DefaultValues.ini`. The list auto-populates from that section for new/empty configs (same pattern as System Excluded Tables).
+**UI** — the **System** tab (3rd tab) shows three columns, each with a "Copy system tables N?" checkbox, a multiline list, and an **Init** button that loads defaults from the matching `[SystemTables]` / `[SystemTables2]` / `[SystemTables3]` section of `DefaultValues.ini`. Each list auto-populates from its section for new/empty configs (same pattern as System Excluded Tables). Default content: list 1 = security/licensing tables, list 2 = metadata/ID tables, list 3 = empty. All three toggles default off.
 
 **Behavior:**
-- During **Discover Tables** (when enabled), system table names are processed after normal discovery. They are skipped in the normal loop so they are never double-added and always take System precedence.
+- During **Discover Tables**, the names from all **enabled** lists are merged and deduplicated, then processed after normal discovery. They are skipped in the normal loop so they are never double-added and always take System precedence.
 - **Include/Exclude filters still apply** (`TablesToInclude`, `TablesToExclude`, `SystemExcludedTables`) — a listed system table is only added if it passes Include and is not matched by Exclude.
 - Metadata comes from SQL Server directly, **not** SQLDICTIONARY: row count/size from `sys.dm_db_partition_stats`, columns from `INFORMATION_SCHEMA.COLUMNS`. All system-table metadata queries are restricted to **`dbo` base tables** so they match exactly what the unqualified `[TableName]` fetch/truncate targets (avoids false positives from non-`dbo` schemas or views).
 - To avoid per-table round-trips to Azure SQL, all metadata is **batch-fetched** in a few `... IN (@p0,@p1,…)` queries (`GetSystemTablesInfoAsync`, `GetTablesColumnsAsync`), then `TableInfo` objects are built in-memory via `BuildSystemTableInfo`.

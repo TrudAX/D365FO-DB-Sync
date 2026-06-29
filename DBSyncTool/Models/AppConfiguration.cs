@@ -49,11 +49,17 @@ namespace DBSyncTool.Models
         public string MaxTransferredRecIds { get; set; } = "";  // Multiline: TABLENAME,MaxRecId
 
         // System tables (not in SQLDICTIONARY) to copy with full TRUNCATE + insert.
-        // Newline-separated exact table names. Honors Include/Exclude filters.
+        // Three independent lists, each with its own copy toggle. Newline-separated exact
+        // table names. Honors Include/Exclude filters. (Group 1 keeps the original field
+        // names for backward compatibility with existing configs.)
         public string SystemTables { get; set; } = "";
-
-        // Whether to copy the System tables list during Discover/Process
         public bool CopySystemTables { get; set; } = false;
+
+        public string SystemTables2 { get; set; } = "";
+        public bool CopySystemTables2 { get; set; } = false;
+
+        public string SystemTables3 { get; set; } = "";
+        public bool CopySystemTables3 { get; set; } = false;
 
         // Post-transfer SQL scripts to execute against AxDB
         public string PostTransferSqlScripts { get; set; } = "";

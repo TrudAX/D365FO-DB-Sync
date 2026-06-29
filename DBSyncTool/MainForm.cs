@@ -337,9 +337,13 @@ namespace DBSyncTool
             chkExecutePostTransferActions.Checked = _currentConfig.ExecutePostTransferActions;
             txtStrategyOverrides.Text = _currentConfig.StrategyOverrides;
 
-            // System tables
+            // System tables (three independent lists)
             chkCopySystemTables.Checked = _currentConfig.CopySystemTables;
             txtSystemTables.Text = _currentConfig.SystemTables;
+            chkCopySystemTables2.Checked = _currentConfig.CopySystemTables2;
+            txtSystemTables2.Text = _currentConfig.SystemTables2;
+            chkCopySystemTables3.Checked = _currentConfig.CopySystemTables3;
+            txtSystemTables3.Text = _currentConfig.SystemTables3;
 
             // Post-Transfer SQL Scripts
             txtPostTransferSql.Text = _currentConfig.PostTransferSqlScripts;
@@ -363,10 +367,18 @@ namespace DBSyncTool
                 InitializeSystemExcludedTables();
             }
 
-            // Initialize system tables if empty (new configuration)
+            // Initialize system tables lists if empty (new configuration)
             if (string.IsNullOrWhiteSpace(_currentConfig.SystemTables))
             {
-                InitializeSystemTables();
+                InitializeSystemTablesGroup("SystemTables", txtSystemTables, v => _currentConfig.SystemTables = v);
+            }
+            if (string.IsNullOrWhiteSpace(_currentConfig.SystemTables2))
+            {
+                InitializeSystemTablesGroup("SystemTables2", txtSystemTables2, v => _currentConfig.SystemTables2 = v);
+            }
+            if (string.IsNullOrWhiteSpace(_currentConfig.SystemTables3))
+            {
+                InitializeSystemTablesGroup("SystemTables3", txtSystemTables3, v => _currentConfig.SystemTables3 = v);
             }
         }
 
@@ -403,9 +415,13 @@ namespace DBSyncTool
             _currentConfig.ExecutePostTransferActions = chkExecutePostTransferActions.Checked;
             _currentConfig.StrategyOverrides = txtStrategyOverrides.Text;
 
-            // System tables
+            // System tables (three independent lists)
             _currentConfig.CopySystemTables = chkCopySystemTables.Checked;
             _currentConfig.SystemTables = txtSystemTables.Text;
+            _currentConfig.CopySystemTables2 = chkCopySystemTables2.Checked;
+            _currentConfig.SystemTables2 = txtSystemTables2.Text;
+            _currentConfig.CopySystemTables3 = chkCopySystemTables3.Checked;
+            _currentConfig.SystemTables3 = txtSystemTables3.Text;
 
             // Post-Transfer SQL Scripts
             _currentConfig.PostTransferSqlScripts = txtPostTransferSql.Text;
@@ -1766,13 +1782,13 @@ namespace DBSyncTool
             }
         }
 
-        private void InitializeSystemTables()
+        private void InitializeSystemTablesGroup(string section, TextBox target, Action<string> assignConfig)
         {
-            var content = LoadDefaultSection("SystemTables");
+            var content = LoadDefaultSection(section);
             if (content != null)
             {
-                txtSystemTables.Text = content;
-                _currentConfig.SystemTables = content;
+                target.Text = content;
+                assignConfig(content);
             }
         }
 
@@ -1811,6 +1827,15 @@ namespace DBSyncTool
         }
 
         private void BtnInitSystemTables_Click(object sender, EventArgs e)
+            => InitSystemTablesFromIni("SystemTables", "System Tables 1", txtSystemTables, v => _currentConfig.SystemTables = v);
+
+        private void BtnInitSystemTables2_Click(object sender, EventArgs e)
+            => InitSystemTablesFromIni("SystemTables2", "System Tables 2", txtSystemTables2, v => _currentConfig.SystemTables2 = v);
+
+        private void BtnInitSystemTables3_Click(object sender, EventArgs e)
+            => InitSystemTablesFromIni("SystemTables3", "System Tables 3", txtSystemTables3, v => _currentConfig.SystemTables3 = v);
+
+        private void InitSystemTablesFromIni(string section, string label, TextBox target, Action<string> assignConfig)
         {
             var filePath = Helpers.DefaultValuesHelper.GetDefaultFilePath();
             if (!File.Exists(filePath))
@@ -1819,19 +1844,19 @@ namespace DBSyncTool
                 return;
             }
 
-            var content = Helpers.DefaultValuesHelper.ReadSection(filePath, "SystemTables");
+            var content = Helpers.DefaultValuesHelper.ReadSection(filePath, section);
             if (content == null)
             {
-                MessageBox.Show("Section [SystemTables] not found in DefaultValues.ini.", "Init", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show($"Section [{section}] not found in DefaultValues.ini.", "Init", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
-            var result = MessageBox.Show("Overwrite System Tables from DefaultValues.ini?", "Init", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            var result = MessageBox.Show($"Overwrite {label} from DefaultValues.ini?", "Init", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
             if (result == DialogResult.Yes)
             {
-                txtSystemTables.Text = content;
-                _currentConfig.SystemTables = content;
-                Log("System tables initialized from DefaultValues.ini");
+                target.Text = content;
+                assignConfig(content);
+                Log($"{label} initialized from DefaultValues.ini");
             }
         }
 

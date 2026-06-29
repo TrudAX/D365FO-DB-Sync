@@ -62,13 +62,19 @@ namespace DBSyncTool.Services
                 // Get inclusion patterns early to check for single table optimization
                 var inclusionPatterns = GetPatterns(_config.TablesToInclude);
 
-                // Parse System tables list (exact names) — only when enabled. These are copied
-                // with a full TRUNCATE + insert even if absent from SQLDICTIONARY.
-                var systemTableNames = _config.CopySystemTables
-                    ? new HashSet<string>(
-                        GetPatterns(_config.SystemTables).Select(n => n.ToUpper()),
-                        StringComparer.OrdinalIgnoreCase)
-                    : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                // Parse the three System tables lists (exact names) — only the enabled ones.
+                // These are copied with a full TRUNCATE + insert even if absent from
+                // SQLDICTIONARY. Names are deduplicated across the lists.
+                var systemTableNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                void AddSystemGroup(bool enabled, string list)
+                {
+                    if (!enabled) return;
+                    foreach (var n in GetPatterns(list))
+                        systemTableNames.Add(n.ToUpper());
+                }
+                AddSystemGroup(_config.CopySystemTables, _config.SystemTables);
+                AddSystemGroup(_config.CopySystemTables2, _config.SystemTables2);
+                AddSystemGroup(_config.CopySystemTables3, _config.SystemTables3);
 
                 // Optimization: If only one specific table (no wildcard), pass it to discovery queries
                 string? specificTableName = null;

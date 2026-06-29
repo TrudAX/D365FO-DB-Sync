@@ -44,11 +44,19 @@ namespace DBSyncTool
             tabPostTransfer = new TabPage();
 
             // System tab controls
+            lblSystemTablesHelp = new Label();
             chkCopySystemTables = new CheckBox();
             lblSystemTables = new Label();
-            lblSystemTablesHelp = new Label();
             txtSystemTables = new TextBox();
             btnInitSystemTables = new Button();
+            chkCopySystemTables2 = new CheckBox();
+            lblSystemTables2 = new Label();
+            txtSystemTables2 = new TextBox();
+            btnInitSystemTables2 = new Button();
+            chkCopySystemTables3 = new CheckBox();
+            lblSystemTables3 = new Label();
+            txtSystemTables3 = new TextBox();
+            btnInitSystemTables3 = new Button();
 
             // Tables tab controls - 4 columns
             grpCol1 = new GroupBox();
@@ -666,11 +674,19 @@ namespace DBSyncTool
             showExcludedTooltip.SetToolTip(chkShowExcludedTables, "When checked, shows tables excluded by filters (with at least 1 record) in the table list with Status=Excluded");
 
             // System Tab
+            tabSystem.Controls.Add(lblSystemTablesHelp);
             tabSystem.Controls.Add(chkCopySystemTables);
             tabSystem.Controls.Add(lblSystemTables);
-            tabSystem.Controls.Add(lblSystemTablesHelp);
-            tabSystem.Controls.Add(txtSystemTables);
             tabSystem.Controls.Add(btnInitSystemTables);
+            tabSystem.Controls.Add(txtSystemTables);
+            tabSystem.Controls.Add(chkCopySystemTables2);
+            tabSystem.Controls.Add(lblSystemTables2);
+            tabSystem.Controls.Add(btnInitSystemTables2);
+            tabSystem.Controls.Add(txtSystemTables2);
+            tabSystem.Controls.Add(chkCopySystemTables3);
+            tabSystem.Controls.Add(lblSystemTables3);
+            tabSystem.Controls.Add(btnInitSystemTables3);
+            tabSystem.Controls.Add(txtSystemTables3);
             tabSystem.Location = new Point(4, 24);
             tabSystem.Name = "tabSystem";
             tabSystem.Padding = new Padding(3);
@@ -678,39 +694,98 @@ namespace DBSyncTool
             tabSystem.Text = "System";
             tabSystem.UseVisualStyleBackColor = true;
 
-            chkCopySystemTables.AutoSize = true;
-            chkCopySystemTables.Location = new Point(10, 15);
-            chkCopySystemTables.Name = "chkCopySystemTables";
-            chkCopySystemTables.Text = "Copy system tables?";
-            chkCopySystemTables.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+            // Shared help text across the three lists
+            lblSystemTablesHelp.AutoSize = true;
+            lblSystemTablesHelp.ForeColor = Color.DimGray;
+            lblSystemTablesHelp.Location = new Point(10, 8);
+            lblSystemTablesHelp.Name = "lblSystemTablesHelp";
+            lblSystemTablesHelp.Text = "One exact table name per line. Each is fully copied (TRUNCATE + insert all rows); copy strategies are ignored. Include/Exclude filters still apply.\r\nTier2 and AxDB must have identical columns or the table is reported as an error. Each list has its own copy toggle; enabled lists are merged and deduplicated.";
+
             ToolTip systemTablesTooltip = new ToolTip();
-            systemTablesTooltip.SetToolTip(chkCopySystemTables, "When checked, the tables listed below are copied during Discover/Process Tables — even if absent from SQLDICTIONARY.");
+
+            // ----- Column 1 -----
+            chkCopySystemTables.AutoSize = true;
+            chkCopySystemTables.Location = new Point(10, 45);
+            chkCopySystemTables.Name = "chkCopySystemTables";
+            chkCopySystemTables.Text = "Copy system tables 1?";
+            chkCopySystemTables.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+            systemTablesTooltip.SetToolTip(chkCopySystemTables, "When checked, the tables in list 1 are copied during Discover/Process Tables — even if absent from SQLDICTIONARY.");
 
             lblSystemTables.AutoSize = true;
             lblSystemTables.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
-            lblSystemTables.Location = new Point(10, 45);
+            lblSystemTables.Location = new Point(10, 72);
             lblSystemTables.Name = "lblSystemTables";
-            lblSystemTables.Text = "System Tables";
+            lblSystemTables.Text = "System Tables 1";
 
-            btnInitSystemTables.Location = new Point(120, 42);
+            btnInitSystemTables.Location = new Point(130, 68);
             btnInitSystemTables.Name = "btnInitSystemTables";
             btnInitSystemTables.Size = new Size(50, 23);
             btnInitSystemTables.Text = "Init";
             btnInitSystemTables.Click += BtnInitSystemTables_Click;
 
-            lblSystemTablesHelp.AutoSize = true;
-            lblSystemTablesHelp.ForeColor = Color.DimGray;
-            lblSystemTablesHelp.Location = new Point(10, 65);
-            lblSystemTablesHelp.Name = "lblSystemTablesHelp";
-            lblSystemTablesHelp.Text = "One exact table name per line. Each is fully copied (TRUNCATE + insert all rows); copy strategies are ignored.\r\nInclude/Exclude filters still apply. Tier2 and AxDB must have identical columns or the table is reported as an error.";
-
-            txtSystemTables.Location = new Point(10, 105);
+            txtSystemTables.Location = new Point(10, 98);
             txtSystemTables.Multiline = true;
             txtSystemTables.Name = "txtSystemTables";
             txtSystemTables.ScrollBars = ScrollBars.Both;
             txtSystemTables.WordWrap = false;
-            txtSystemTables.Size = new Size(500, 680);
+            txtSystemTables.Size = new Size(440, 580);
             txtSystemTables.Font = new Font("Consolas", 9F);
+
+            // ----- Column 2 -----
+            chkCopySystemTables2.AutoSize = true;
+            chkCopySystemTables2.Location = new Point(470, 45);
+            chkCopySystemTables2.Name = "chkCopySystemTables2";
+            chkCopySystemTables2.Text = "Copy system tables 2?";
+            chkCopySystemTables2.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+            systemTablesTooltip.SetToolTip(chkCopySystemTables2, "When checked, the tables in list 2 are copied during Discover/Process Tables — even if absent from SQLDICTIONARY.");
+
+            lblSystemTables2.AutoSize = true;
+            lblSystemTables2.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+            lblSystemTables2.Location = new Point(470, 72);
+            lblSystemTables2.Name = "lblSystemTables2";
+            lblSystemTables2.Text = "System Tables 2";
+
+            btnInitSystemTables2.Location = new Point(590, 68);
+            btnInitSystemTables2.Name = "btnInitSystemTables2";
+            btnInitSystemTables2.Size = new Size(50, 23);
+            btnInitSystemTables2.Text = "Init";
+            btnInitSystemTables2.Click += BtnInitSystemTables2_Click;
+
+            txtSystemTables2.Location = new Point(470, 98);
+            txtSystemTables2.Multiline = true;
+            txtSystemTables2.Name = "txtSystemTables2";
+            txtSystemTables2.ScrollBars = ScrollBars.Both;
+            txtSystemTables2.WordWrap = false;
+            txtSystemTables2.Size = new Size(440, 260);
+            txtSystemTables2.Font = new Font("Consolas", 9F);
+
+            // ----- List 3 (stacked under list 2) -----
+            chkCopySystemTables3.AutoSize = true;
+            chkCopySystemTables3.Location = new Point(470, 370);
+            chkCopySystemTables3.Name = "chkCopySystemTables3";
+            chkCopySystemTables3.Text = "Copy system tables 3?";
+            chkCopySystemTables3.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+            systemTablesTooltip.SetToolTip(chkCopySystemTables3, "When checked, the tables in list 3 are copied during Discover/Process Tables — even if absent from SQLDICTIONARY.");
+
+            lblSystemTables3.AutoSize = true;
+            lblSystemTables3.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+            lblSystemTables3.Location = new Point(470, 397);
+            lblSystemTables3.Name = "lblSystemTables3";
+            lblSystemTables3.Text = "System Tables 3";
+
+            btnInitSystemTables3.Location = new Point(590, 393);
+            btnInitSystemTables3.Name = "btnInitSystemTables3";
+            btnInitSystemTables3.Size = new Size(50, 23);
+            btnInitSystemTables3.Text = "Init";
+            btnInitSystemTables3.Click += BtnInitSystemTables3_Click;
+
+            txtSystemTables3.Location = new Point(470, 423);
+            txtSystemTables3.Multiline = true;
+            txtSystemTables3.Name = "txtSystemTables3";
+            txtSystemTables3.ScrollBars = ScrollBars.Both;
+            txtSystemTables3.WordWrap = false;
+            txtSystemTables3.Size = new Size(440, 255);
+            txtSystemTables3.Font = new Font("Consolas", 9F);
 
             // SavedRowValues Tab
             tabSavedRowValues.Controls.Add(lblOptimization);
@@ -1151,11 +1226,19 @@ namespace DBSyncTool
         private TabPage tabPostTransfer;
 
         // System Tab
+        private Label lblSystemTablesHelp;
         private CheckBox chkCopySystemTables;
         private Label lblSystemTables;
-        private Label lblSystemTablesHelp;
         private TextBox txtSystemTables;
         private Button btnInitSystemTables;
+        private CheckBox chkCopySystemTables2;
+        private Label lblSystemTables2;
+        private TextBox txtSystemTables2;
+        private Button btnInitSystemTables2;
+        private CheckBox chkCopySystemTables3;
+        private Label lblSystemTables3;
+        private TextBox txtSystemTables3;
+        private Button btnInitSystemTables3;
 
         // Tables Tab - 4 columns
         private GroupBox grpCol1;

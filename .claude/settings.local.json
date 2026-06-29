@@ -55,7 +55,8 @@
       "PowerShell($exe = Get-Item ./publish/DBSyncTool.exe; \"FileVersion:    $\\($exe.VersionInfo.FileVersion\\)\"; \"ProductVersion: $\\($exe.VersionInfo.ProductVersion\\)\")",
       "Bash(git fetch *)",
       "PowerShell(dotnet build DBSyncTool/DBSyncTool.sln -nologo -clp:ErrorsOnly)",
-      "PowerShell(git -C C:\\\\DBCopyApp status --short; echo \"---TAGS---\"; git -C C:\\\\DBCopyApp tag --sort=-creatordate | Select-Object -First 5; echo \"---RELEASES---\"; gh release list --repo \\(git -C C:\\\\DBCopyApp remote get-url origin\\) -L 5)"
+      "PowerShell(git -C C:\\\\DBCopyApp status --short; echo \"---TAGS---\"; git -C C:\\\\DBCopyApp tag --sort=-creatordate | Select-Object -First 5; echo \"---RELEASES---\"; gh release list --repo \\(git -C C:\\\\DBCopyApp remote get-url origin\\) -L 5)",
+      "PowerShell(cd C:\\\\DBCopyApp; \\(Get-Item ./publish/DBSyncTool.dll\\).VersionInfo.FileVersion)"
     ],
     "deny": [],
     "ask": []
