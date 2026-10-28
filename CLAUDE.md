@@ -631,6 +631,7 @@ Used for tables without SysRowVersion OR when optimization not available:
 - Post-transfer execution chain: SQL scripts → Database Backup → PowerShell script (each step conditional on previous success)
 - DataGridView bound to `List<TableInfo>` via events from CopyOrchestrator
 - Copy strategy group buttons: **Sort** (sort strategies + save) and **Clear Saved** (clear saved values for selected strategy lines — see [Strategy Changes vs Saved Values](#strategy-changes-vs-saved-values))
+- The **Per-Table Strategy (?)** label is clickable: hovering shows the help as a tooltip, clicking opens the same text in a resizable, scrollable, copyable window (`MainForm.LblStrategyOverrides_Click`). Both read the single `MainForm.StrategyHelpText` constant in `MainForm.Designer.cs` — edit the help there and both stay in sync
 - Help text under "AxDB Backup After Transfer" is a read-only borderless TextBox (`txtBackupDatabaseHelp`), not a Label, so the example path can be selected and copied — same pattern as `txtLastBackupPath`
 - Context menu items: "Copy Table Name" and "Get SQL"
 - Error column truncates to 50 chars, full error in tooltip

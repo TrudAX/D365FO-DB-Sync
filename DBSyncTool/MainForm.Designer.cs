@@ -13,6 +13,39 @@ namespace DBSyncTool
             base.Dispose(disposing);
         }
 
+        /// <summary>
+        /// Copy strategy help. Used as the tooltip of the "Per-Table Strategy (?)" label
+        /// and as the content of the window that opens when the label is clicked.
+        /// </summary>
+        internal const string StrategyHelpText =
+                "Simplified Strategy Syntax (one per line):\n\n" +
+                "RecId Strategy:\n" +
+                "  TABLENAME               Use default record count\n" +
+                "  TABLENAME|5000          Top 5000 records by RecId DESC\n" +
+                "  TABLENAME|10m           Top 10 million records by RecId DESC\n\n" +
+                "SQL Strategy (custom query):\n" +
+                "  TABLENAME|sql:SELECT * FROM TABLENAME WHERE DATAAREAID='1000'\n" +
+                "  TABLENAME|5000|sql:SELECT * FROM TABLENAME WHERE POSTED=1\n\n" +
+                "SQL Placeholders:\n" +
+                "  *                     Replaced with actual field list\n" +
+                "  @recordCount          Replaced with record count (default or specified)\n" +
+                "  @sysRowVersionFilter  Replaced with SysRowVersion >= threshold AND RecId >= minRecId\n" +
+                "                        (Required for SQL strategies to use INCREMENTAL optimization)\n\n" +
+                "Flags:\n" +
+                "  -truncate      Force TRUNCATE instead of delta comparison\n" +
+                "  -notruncate    Ignore the 'Force truncate mode' checkbox for this table\n" +
+                "                 (table keeps the normal mode; cannot be combined with -truncate)\n\n" +
+                "Examples:\n" +
+                "  CUSTTABLE\n" +
+                "  SALESLINE|10000\n" +
+                "  ECORESATTRIBUTEVALUE|10m\n" +
+                "  INVENTTRANS|sql:SELECT * FROM INVENTTRANS WHERE DATAAREAID='USMF'\n" +
+                "  CUSTTRANS|5000|sql:SELECT TOP (@recordCount) * FROM CUSTTRANS WHERE BLOCKED=0\n" +
+                "  VENDTABLE|5000 -truncate\n" +
+                "  INVENTTRANS|50000 -notruncate\n\n" +
+                "Examples with optimization:\n" +
+                "  INVENTDIM|50000|sql:SELECT * FROM INVENTDIM WHERE DATAAREAID='1000' AND @sysRowVersionFilter ORDER BY RecId DESC";
+
         #region Windows Form Designer generated code
 
         private void InitializeComponent()
@@ -378,33 +411,9 @@ namespace DBSyncTool
             lblStrategyOverrides.Text = "Per-Table Strategy (?)";
             ToolTip tooltip = new ToolTip();
             tooltip.SetToolTip(lblStrategyOverrides,
-                "Simplified Strategy Syntax (one per line):\n\n" +
-                "RecId Strategy:\n" +
-                "  TABLENAME               Use default record count\n" +
-                "  TABLENAME|5000          Top 5000 records by RecId DESC\n" +
-                "  TABLENAME|10m           Top 10 million records by RecId DESC\n\n" +
-                "SQL Strategy (custom query):\n" +
-                "  TABLENAME|sql:SELECT * FROM TABLENAME WHERE DATAAREAID='1000'\n" +
-                "  TABLENAME|5000|sql:SELECT * FROM TABLENAME WHERE POSTED=1\n\n" +
-                "SQL Placeholders:\n" +
-                "  *                     Replaced with actual field list\n" +
-                "  @recordCount          Replaced with record count (default or specified)\n" +
-                "  @sysRowVersionFilter  Replaced with SysRowVersion >= threshold AND RecId >= minRecId\n" +
-                "                        (Required for SQL strategies to use INCREMENTAL optimization)\n\n" +
-                "Flags:\n" +
-                "  -truncate      Force TRUNCATE instead of delta comparison\n" +
-                "  -notruncate    Ignore the 'Force truncate mode' checkbox for this table\n" +
-                "                 (table keeps the normal mode; cannot be combined with -truncate)\n\n" +
-                "Examples:\n" +
-                "  CUSTTABLE\n" +
-                "  SALESLINE|10000\n" +
-                "  ECORESATTRIBUTEVALUE|10m\n" +
-                "  INVENTTRANS|sql:SELECT * FROM INVENTTRANS WHERE DATAAREAID='USMF'\n" +
-                "  CUSTTRANS|5000|sql:SELECT TOP (@recordCount) * FROM CUSTTRANS WHERE BLOCKED=0\n" +
-                "  VENDTABLE|5000 -truncate\n" +
-                "  INVENTTRANS|50000 -notruncate\n\n" +
-                "Examples with optimization:\n" +
-                "  INVENTDIM|50000|sql:SELECT * FROM INVENTDIM WHERE DATAAREAID='1000' AND @sysRowVersionFilter ORDER BY RecId DESC");
+                StrategyHelpText + "\n\nClick for a resizable window you can scroll and copy from.");
+            lblStrategyOverrides.Cursor = Cursors.Hand;
+            lblStrategyOverrides.Click += LblStrategyOverrides_Click;
 
             btnSortStrategies.Text = "Sort";
             btnSortStrategies.Location = new Point(150, 21);

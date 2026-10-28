@@ -2254,6 +2254,71 @@ namespace DBSyncTool
             _tablesBindingList.ResetBindings();
         }
 
+        /// <summary>
+        /// Shows the Copy strategy help in its own window. Same text as the label's tooltip,
+        /// but scrollable, resizable and selectable so the examples can be copied out.
+        /// </summary>
+        private void LblStrategyOverrides_Click(object sender, EventArgs e)
+        {
+            using var helpForm = new Form
+            {
+                Text = "Per-Table Strategy - help",
+                Width = 900,
+                Height = 640,
+                MinimumSize = new Size(480, 300),
+                StartPosition = FormStartPosition.CenterParent,
+                FormBorderStyle = FormBorderStyle.Sizable,
+                MinimizeBox = false,
+                ShowIcon = false
+            };
+
+            // Multiline TextBox needs real line breaks - the tooltip text uses bare \n
+            var txtHelp = new TextBox
+            {
+                Text = StrategyHelpText.Replace("\n", Environment.NewLine),
+                Multiline = true,
+                ReadOnly = true,
+                WordWrap = false,
+                ScrollBars = ScrollBars.Both,
+                Font = new Font("Consolas", 9F),
+                BackColor = Color.White,
+                BorderStyle = BorderStyle.None,
+                Dock = DockStyle.Fill
+            };
+
+            var btnClose = new Button
+            {
+                Text = "Close",
+                Width = 100,
+                Height = 28,
+                DialogResult = DialogResult.OK
+            };
+
+            // Dock the button strip first (added last), so the text box fills what is left
+            var pnlButtons = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Bottom,
+                Height = 44,
+                FlowDirection = FlowDirection.RightToLeft,
+                Padding = new Padding(0, 8, 12, 0)
+            };
+            pnlButtons.Controls.Add(btnClose);
+
+            helpForm.Controls.Add(txtHelp);
+            helpForm.Controls.Add(pnlButtons);
+            helpForm.AcceptButton = btnClose;
+            helpForm.CancelButton = btnClose;
+
+            // The focused TextBox would otherwise come up with all text selected
+            helpForm.Shown += (s, args) =>
+            {
+                txtHelp.SelectionStart = 0;
+                txtHelp.SelectionLength = 0;
+            };
+
+            helpForm.ShowDialog(this);
+        }
+
         private void BtnSortStrategies_Click(object sender, EventArgs e)
         {
             var text = txtStrategyOverrides.Text;
