@@ -46,20 +46,26 @@ namespace DBSyncTool.Helpers
                 return PreviewRoute.Standard;
             }
 
+            // -notruncate only cancels the global 'Force truncate mode'; the routing below is
+            // the normal one, including the automatic TRUNCATE once the threshold is exceeded.
+            string noTruncateNote = table.NoTruncate
+                ? "; -notruncate: 'Force truncate mode' does not apply to this table"
+                : "";
+
             if (table.UseOptimizedMode)
             {
                 if (table.StrategyType == CopyStrategyType.Sql && !HasRowVersionPlaceholder(table))
                 {
-                    reason = "SQL strategy has no @sysRowVersionFilter placeholder - optimized mode falls back to standard at runtime";
+                    reason = "SQL strategy has no @sysRowVersionFilter placeholder - optimized mode falls back to standard at runtime" + noTruncateNote;
                     return PreviewRoute.Standard;
                 }
-                reason = "table has SysRowVersion and both timestamps are stored";
+                reason = "table has SysRowVersion and both timestamps are stored" + noTruncateNote;
                 return PreviewRoute.Optimized;
             }
 
-            reason = HasCopyableField(table, "SYSROWVERSION")
+            reason = (HasCopyableField(table, "SYSROWVERSION")
                 ? "no saved values yet - timestamps are stored after this run, enabling optimized mode next time"
-                : "table has no SysRowVersion column";
+                : "table has no SysRowVersion column") + noTruncateNote;
             return PreviewRoute.Standard;
         }
 
@@ -110,7 +116,9 @@ namespace DBSyncTool.Helpers
         /// </summary>
         private static string DescribeStrategy(TableInfo table, int recordCount, AppConfiguration config)
         {
-            string truncateFlag = table.UseTruncate ? "  -truncate (forced TRUNCATE)" : "";
+            string truncateFlag = table.UseTruncate
+                ? "  -truncate (forced TRUNCATE)"
+                : table.NoTruncate ? "  -notruncate (exempt from 'Force truncate mode')" : "";
 
             switch (table.StrategyType)
             {

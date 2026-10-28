@@ -185,7 +185,7 @@ Write-Host "Uploading $BackupFilePath..."
 - **Simplified Copy Strategies**:
   - **RecId Strategy**: Copy top N records by RecId DESC (e.g., `CUSTTABLE|5000`)
   - **SQL Strategy**: Custom SQL queries with placeholders (e.g., `CUSTTABLE|sql:SELECT * FROM CUSTTABLE WHERE DATAAREAID='USMF'`)
-  - **Truncate Option**: Force TRUNCATE before insert with `-truncate` flag
+  - **Truncate Option**: Force TRUNCATE before insert with `-truncate` flag, or exempt a table from the global **Force truncate mode** with `-notruncate`
 - **SysRowVersion Optimization**: Intelligent change detection for incremental sync
   - **INCREMENTAL Mode**: Only sync changed records when changes < 40% threshold
   - **TRUNCATE Mode**: Full table refresh when changes > 40% threshold
@@ -202,7 +202,7 @@ Write-Host "Uploading $BackupFilePath..."
 
 **Format:**
 ```
-TableName|RecordCount|sql:CustomQuery -truncate
+TableName|RecordCount|sql:CustomQuery -truncate|-notruncate
 ```
 
 **Examples:**
@@ -212,6 +212,7 @@ SALESLINE|10000              # RecId: top 10000
 INVENTTRANS|sql:SELECT * FROM INVENTTRANS WHERE DATAAREAID='USMF' ORDER BY RecId DESC
 CUSTTRANS|5000|sql:SELECT TOP (@recordCount) * FROM CUSTTRANS WHERE BLOCKED=0 ORDER BY RecId DESC
 VENDTABLE|5000 -truncate     # Force truncate
+INVENTTRANS|50000 -notruncate  # Ignore the "Force truncate mode" checkbox for this table
 ```
 
 **SQL Placeholders:**

@@ -184,7 +184,7 @@ By default, the system matches the last X records between AxDB and Tier2. For so
 1. Click **Process Tables** to start copying all discovered tables
 2. The system will copy all tables to AxDB using parallel workers
 3. Monitor progress in the log window
-4. If a table fails, use **Process Selected** to retry it. Multiple rows can be selected — they are processed one-by-one top-to-bottom, stopping on the first failure
+4. If a table fails, fix it (change its Copy strategy line, or add it to **Tables to Exclude**) and press **Process Tables** again — the current settings are re-applied and the failed table is retried. **Process Selected** retries individual rows instead; multiple rows can be selected, they are processed one-by-one top-to-bottom, stopping on the first failure
 
 **Tips:**
 - First run may take longer as it performs delta comparison
@@ -227,7 +227,7 @@ By default, the system matches the last X records between AxDB and Tier2. For so
 ### Data Flow (Two Stages)
 
 1. **Discover Tables**: Discovers tables from Tier2, applies inclusion/exclusion patterns, validates schemas against AxDB, generates fetch SQL for each table
-2. **Process Tables**: Parallel workers process tables atomically (each worker: fetch → insert → clear memory → next table). Default: 10 parallel workers, configurable 1-50. Memory cleared immediately after successful insert, retained only for failed tables to enable retry.
+2. **Process Tables**: Re-applies the current settings to the discovered list (see [Re-applying Settings on Process Tables](#re-applying-settings-on-process-tables)), then parallel workers process tables atomically (each worker: fetch → insert → clear memory → next table). Default: 10 parallel workers, configurable 1-50. Memory cleared immediately after successful insert, retained only for failed tables to enable retry.
 
 ### Copy Strategy System
 
@@ -239,7 +239,7 @@ The tool supports three strategy types defined in `Models/TableInfo.cs`:
 
 **Strategy Syntax:**
 ```
-TableName|RecordCount|sql:CustomQuery -truncate
+TableName|RecordCount|sql:CustomQuery -truncate|-notruncate
 ```
 
 **Examples:**
@@ -248,6 +248,7 @@ TableName|RecordCount|sql:CustomQuery -truncate
 - `INVENTTRANS|sql:SELECT * FROM INVENTTRANS WHERE DATAAREAID='USMF'` - SQL strategy
 - `CUSTTRANS|5000|sql:SELECT TOP (@recordCount) * FROM CUSTTRANS WHERE BLOCKED=0` - SQL with count
 - `VENDTABLE|5000 -truncate` - Force truncate mode
+- `INVENTTRANS|50000 -notruncate` - Exempt from the global **Force truncate mode** checkbox
 
 **SQL Placeholders:**
 - `*` - Replaced with actual field list (only common fields between Tier2 and AxDB)
@@ -258,7 +259,26 @@ TableName|RecordCount|sql:CustomQuery -truncate
   - User must manually add this placeholder to their SQL query WHERE clause
   - Example: `INVENTDIM|50000|sql:SELECT * FROM INVENTDIM WHERE DATAAREAID='1000' AND @sysRowVersionFilter ORDER BY RecId DESC`
 
-Add `-truncate` flag to any strategy to force TRUNCATE mode before insert.
+**Flags** (trailing, any order, both are case-insensitive):
+
+- `-truncate` — force TRUNCATE mode before insert for this table.
+- `-notruncate` — the global **Force truncate mode** checkbox does not apply to this table: it is processed exactly as if the checkbox were off. Used to truncate-copy everything *except* a few tables. It does **not** disable the automatic TRUNCATE that normal mode picks when the change percentage or the AxDB excess exceeds `TruncateThresholdPercent` — that decision is made per run from live data.
+- Combining `-truncate` and `-notruncate` on one line is a parse error.
+- Parsed in `CopyOrchestrator.ParseStrategyLine` into `StrategyOverride.UseTruncate` / `NoTruncate`; the effective value is `TableInfo.UseTruncate = strategy.UseTruncate || (TruncateAllTables && !strategy.NoTruncate)`, computed in Discover Tables and in `ApplyStrategyToTable`. Shown in the grid's **Strategy** column as `TRUNC` / `NO-TRUNC`.
+- With **Force truncate mode** on, discovery also picks up tables that are empty in Tier2 but non-empty in AxDB (so they get truncated); a `-notruncate` table is skipped there instead, since it would have nothing to copy and must not be truncated.
+
+### Re-applying Settings on Process Tables
+
+**Process Tables** does not simply run the list as discovered: `CopyOrchestrator.ReapplyFiltersAndStrategiesAsync()` runs first, so the user can fix a failing table and press the button again without a full Discover Tables (which would re-query Tier2 for every table).
+
+- **Already inserted tables are never touched** — they keep `Inserted` status and are not copied twice.
+- **Tables to Exclude / System Excluded Tables / Tables to Copy** are re-applied: a table now matched by an exclusion pattern (or no longer matched by an inclusion pattern) becomes `Excluded` and is skipped. A System-strategy table whose list toggle was switched off is excluded the same way.
+- **Failed tables** (`FetchError` / `InsertError`, which includes tables cancelled by the auto-stop on first failure) are reset to `Pending` with their cached data disposed, so they are retried with the current settings. A failed **System** table is re-validated against Tier2/AxDB first (`ReapplyStrategyForTable`) and stays failed if it is still missing or its schema still differs.
+- **Copy strategy and saved values** are re-applied to every remaining table via `ApplyStrategyToTable` (fetch SQL, record count, estimated size, `UseTruncate`/`NoTruncate`, optimized-mode flags, timestamps and MaxRecId). No database round-trip: the metadata found during Discover Tables is kept.
+- The **Tier2 connection is rebuilt** from the saved configuration, so edited credentials/server take effect (same as **Retry Failed**).
+- A table that is **no longer excluded is not brought back**: the grid row is a stub without TableId or field list, which only Discover Tables can fill. Run Discover Tables for that.
+- `BtnProcessTables_Click` rejects duplicate strategy lines first (same check as Discover Tables), and the orchestrator parses all strategy lines before changing anything, so an invalid line aborts the run instead of half-applying it.
+- Every re-applied strategy, every newly excluded table and a summary line are written to the log.
 
 ### Strategy Changes vs Saved Values
 
@@ -268,7 +288,7 @@ Saved values (SysRowVersion timestamps + MaxRecId, **Saved Values** tab) put a t
 - **`MayFetchMoreData`**: each change is classified by `SavedValuesHelper.ParseStrategy` (a comparison-only mirror of `CopyOrchestrator.ParseStrategyLine`, incl. the `10m` suffix). Only a plain RecId count that stays equal or gets smaller is treated as safe; **anything involving SQL, an unparseable line, or a bigger count counts as widening**. Added/removed lines are compared against `DefaultRecordCount` (the effective strategy without a line). `-truncate` on the new line is safe — it forces a full refresh, which saved values cannot restrict.
 - **Prompt**: when widening changes exist *and* those tables actually have saved values, a Yes/No dialog lists them and offers to clear (default button No). Yes → `ClearSavedValuesForTables()`; No → a log line reminding the user about the **Clear Saved** button. No dialog when nothing is stored, or when the save runs on a background thread (logs a reminder instead — never blocks a worker).
 - **Manual**: the **Clear Saved** button in the **Copy strategy** group (next to **Sort**) clears saved values for the tables in the currently selected strategy lines — or the caret line when nothing is selected. Asks for confirmation, then saves the config to disk. Refuses to run while an operation is executing (shows a message instead).
-- **Pending clears** (`MainForm._pendingStrategyClears`): processing an *already discovered* table list re-applies timestamps from the pre-edit strategy held in `TableInfo`, which would silently undo a clear. Tables the user chose to clear are therefore re-cleared on every subsequent config save (`ReapplyPendingClears`) until a Discover Tables / Run All rebuilds the list (or Process Selected re-applies the strategy for that table via `ReapplyStrategyForTable`). The set is also reset when a different configuration is loaded.
+- **Pending clears** (`MainForm._pendingStrategyClears`): processing an *already discovered* table list can re-apply timestamps from the pre-edit strategy held in `TableInfo` (**Retry Failed** does), which would silently undo a clear. Tables the user chose to clear are therefore re-cleared on every subsequent config save (`ReapplyPendingClears`) until a Discover Tables / Run All rebuilds the list. A table is dropped from the set once it has been processed with the current strategy — Process Selected (`ReapplyStrategyForTable`) and Process Tables (which re-applies the strategy to the whole list, then drops every `Inserted` table from the set) both do this. The set is also reset when a different configuration is loaded.
 - **"Records to copy"**: this is the default count for every table without an explicit strategy line, so a change affects most tables. `NudDefaultRecordCount_Leave` fires when the field loses focus (not on `ValueChanged`, so spinning through values prompts only once) and, if the count **increased** and any saved values exist, asks whether to run **Clear All** on the Saved Values tab. Yes → `ClearAllSavedValues()` (the same method the tab's **Clear All** button uses); No → logged warning. Silent on a decrease, when nothing is stored, or while an operation is running.
 - Every detected change, every skipped (narrowing) change and every cleared table is written to the log.
 
@@ -440,6 +460,7 @@ Used when changes ≥ threshold OR `-truncate` flag OR first run with excess rec
 **Triggers TRUNCATE mode when:**
 - Change percentage ≥ threshold (default 40%)
 - `-truncate` flag specified in strategy
+- **Force truncate mode** checkbox is on — unless the table's strategy line carries `-notruncate`
 - First run detected excess records: `(AxDB_count - Fetched_count) / Fetched_count > Threshold%`
 
 ### Delta Comparison v2 (Standard Mode)

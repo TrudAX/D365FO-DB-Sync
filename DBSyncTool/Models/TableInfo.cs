@@ -14,6 +14,7 @@ namespace DBSyncTool.Models
         public int? RecIdCount { get; set; }       // Explicit count or null for default
         public string SqlTemplate { get; set; } = string.Empty;  // For SQL strategy
         public bool UseTruncate { get; set; }    // -truncate flag
+        public bool NoTruncate { get; set; }     // -notruncate flag: table ignores "Force truncate mode"
         public double TruncateThresholdPercent { get; set; }  // From config, used in delta comparison optimization
 
         // Tier2 Info
@@ -86,6 +87,8 @@ namespace DBSyncTool.Models
 
                 if (UseTruncate)
                     parts.Add("TRUNC");
+                else if (NoTruncate)
+                    parts.Add("NO-TRUNC");
 
                 return string.Join(" ", parts);
             }

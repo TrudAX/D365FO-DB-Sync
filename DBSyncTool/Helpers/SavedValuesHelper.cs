@@ -59,10 +59,36 @@ namespace DBSyncTool.Helpers
         /// </summary>
         public static string GetStrategyTableName(string line)
         {
+            return StripFlags(line, out _, out _).Split('|')[0].Trim();
+        }
+
+        /// <summary>
+        /// Removes the trailing -truncate / -notruncate flags from a strategy line, mirroring
+        /// CopyOrchestrator.ParseStrategyLine.
+        /// </summary>
+        private static string StripFlags(string line, out bool useTruncate, out bool noTruncate)
+        {
+            useTruncate = false;
+            noTruncate = false;
+
             var l = line.Trim();
-            if (l.EndsWith(" -truncate", StringComparison.OrdinalIgnoreCase))
-                l = l.Substring(0, l.Length - 10).Trim();
-            return l.Split('|')[0].Trim();
+            while (true)
+            {
+                if (l.EndsWith(" -truncate", StringComparison.OrdinalIgnoreCase))
+                {
+                    useTruncate = true;
+                    l = l.Substring(0, l.Length - " -truncate".Length).Trim();
+                }
+                else if (l.EndsWith(" -notruncate", StringComparison.OrdinalIgnoreCase))
+                {
+                    noTruncate = true;
+                    l = l.Substring(0, l.Length - " -notruncate".Length).Trim();
+                }
+                else
+                {
+                    return l;
+                }
+            }
         }
 
         /// <summary>
@@ -155,13 +181,9 @@ namespace DBSyncTool.Helpers
             if (line == null)
                 return new ParsedStrategy { Valid = true, RecordCount = defaultRecordCount };
 
-            var working = line.Trim();
-            bool useTruncate = false;
-            if (working.EndsWith(" -truncate", StringComparison.OrdinalIgnoreCase))
-            {
-                useTruncate = true;
-                working = working.Substring(0, working.Length - 10).Trim();
-            }
+            var working = StripFlags(line, out bool useTruncate, out bool noTruncate);
+            if (useTruncate && noTruncate)
+                return new ParsedStrategy { Valid = false };
 
             var parts = working.Split('|');
             if (parts.Length == 0 || string.IsNullOrWhiteSpace(parts[0]))

@@ -44,6 +44,39 @@ namespace DBSyncTool.Services
         }
 
         /// <summary>
+        /// Names from the three System tables lists, taking only the lists whose copy toggle
+        /// is on. Uppercased and deduplicated, matching how Tier2 stores table names.
+        /// </summary>
+        private HashSet<string> GetEnabledSystemTableNames()
+        {
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            void AddSystemGroup(bool enabled, string list)
+            {
+                if (!enabled) return;
+                foreach (var n in GetPatterns(list))
+                    names.Add(n.ToUpper());
+            }
+
+            AddSystemGroup(_config.CopySystemTables, _config.SystemTables);
+            AddSystemGroup(_config.CopySystemTables2, _config.SystemTables2);
+            AddSystemGroup(_config.CopySystemTables3, _config.SystemTables3);
+
+            return names;
+        }
+
+        /// <summary>
+        /// Drops the data a table is holding (fetched rows and control data).
+        /// </summary>
+        private static void ReleaseTableMemory(TableInfo table)
+        {
+            table.CachedData?.Dispose();
+            table.CachedData = null;
+            table.ControlData?.Dispose();
+            table.ControlData = null;
+        }
+
+        /// <summary>
         /// Stage 1: Discover Tables
         /// </summary>
         public async Task PrepareTableListAsync()
@@ -62,19 +95,10 @@ namespace DBSyncTool.Services
                 // Get inclusion patterns early to check for single table optimization
                 var inclusionPatterns = GetPatterns(_config.TablesToInclude);
 
-                // Parse the three System tables lists (exact names) — only the enabled ones.
+                // The three System tables lists (exact names) — only the enabled ones.
                 // These are copied with a full TRUNCATE + insert even if absent from
                 // SQLDICTIONARY. Names are deduplicated across the lists.
-                var systemTableNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                void AddSystemGroup(bool enabled, string list)
-                {
-                    if (!enabled) return;
-                    foreach (var n in GetPatterns(list))
-                        systemTableNames.Add(n.ToUpper());
-                }
-                AddSystemGroup(_config.CopySystemTables, _config.SystemTables);
-                AddSystemGroup(_config.CopySystemTables2, _config.SystemTables2);
-                AddSystemGroup(_config.CopySystemTables3, _config.SystemTables3);
+                var systemTableNames = GetEnabledSystemTableNames();
 
                 // Optimization: If only one specific table (no wildcard), pass it to discovery queries
                 string? specificTableName = null;
@@ -148,11 +172,21 @@ namespace DBSyncTool.Services
                         continue;
                     }
 
-                    // Skip empty Tier2 tables unless AxDB has rows (truncate mode only)
+                    // Determine copy strategy
+                    var strategy = GetStrategy(tableName, strategyOverrides);
+
+                    // Skip empty Tier2 tables unless AxDB has rows (truncate mode only).
+                    // -notruncate tables are never truncated, so there is nothing to do for them.
                     if (rowCount == 0)
                     {
                         if (axdbNonEmptyTables == null || !axdbNonEmptyTables.Contains(tableName))
                         {
+                            skipped++;
+                            continue;
+                        }
+                        if (strategy.NoTruncate)
+                        {
+                            _logger($"[Truncate] {tableName}: 0 rows in Tier2 but -notruncate — skipped");
                             skipped++;
                             continue;
                         }
@@ -177,9 +211,6 @@ namespace DBSyncTool.Services
                         skipped++;
                         continue;
                     }
-
-                    // Determine copy strategy
-                    var strategy = GetStrategy(tableName, strategyOverrides);
 
                     // Get fields from caches (no database queries!)
                     var tier2Fields = tier2Cache.GetFields(tier2TableId.Value) ?? new List<string>();
@@ -242,7 +273,8 @@ namespace DBSyncTool.Services
                         StrategyType = strategy.StrategyType,
                         RecIdCount = strategy.RecIdCount,
                         SqlTemplate = strategy.SqlTemplate,
-                        UseTruncate = strategy.UseTruncate || _config.TruncateAllTables,
+                        UseTruncate = strategy.UseTruncate || (_config.TruncateAllTables && !strategy.NoTruncate),
+                        NoTruncate = strategy.NoTruncate,
                         Tier2RowCount = rowCount,
                         Tier2SizeGB = sizeGB,
                         BytesPerRow = bytesPerRow,
@@ -421,6 +453,12 @@ namespace DBSyncTool.Services
             {
                 _logger("─────────────────────────────────────────────");
                 _logger("Starting Process Tables...");
+
+                // Pick up configuration edits made since the list was discovered (connection,
+                // Tables to Exclude, Copy strategy), so a table that failed can be fixed and
+                // this button pressed again. Already inserted tables are never re-processed.
+                _tier2Service = new Tier2DataService(_config.Tier2Connection, _logger);
+                await ReapplyFiltersAndStrategiesAsync();
 
                 var pendingTables = _tables.Where(t => t.Status == TableStatus.Pending).ToList();
                 if (pendingTables.Count == 0)
@@ -672,6 +710,31 @@ namespace DBSyncTool.Services
             // Get the strategy for this table
             var strategy = GetStrategy(table.TableName, strategyOverrides);
 
+            // Debug logging
+            bool hasSysRowVersion = table.CopyableFields
+                .Any(f => f.Equals("SYSROWVERSION", StringComparison.OrdinalIgnoreCase));
+            _logger($"[{table.TableName}] Has SysRowVersion: {hasSysRowVersion}, " +
+                    $"Tier2 TS: {(_timestampManager.GetTier2Timestamp(table.TableName) != null ? "found" : "null")}, " +
+                    $"AxDB TS: {(_timestampManager.GetAxDBTimestamp(table.TableName) != null ? "found" : "null")}");
+
+            ApplyStrategyToTable(table, strategy);
+
+            _logger($"Re-applied strategy for {table.TableName}: {table.StrategyDisplay}");
+            if (table.UseOptimizedMode)
+            {
+                _logger($"[{table.TableName}] Optimization enabled (timestamps found)");
+            }
+        }
+
+        /// <summary>
+        /// Applies a parsed strategy and the saved values currently held by the timestamp /
+        /// MaxRecId managers to an already discovered table: fetch SQL, record count,
+        /// estimated size, TRUNCATE and optimized-mode flags. No database access - the table
+        /// keeps the metadata found during Discover Tables.
+        /// Returns true when something that changes the next run was actually updated.
+        /// </summary>
+        private bool ApplyStrategyToTable(TableInfo table, StrategyOverride strategy)
+        {
             // Regenerate fetch SQL with new strategy
             string fetchSql = GenerateFetchSql(table.TableName, table.CopyableFields, strategy);
 
@@ -689,23 +752,34 @@ namespace DBSyncTool.Services
                 ? (decimal)table.BytesPerRow * recordsForCalculation / 1_000_000m
                 : 0;
 
-            // Check if optimized mode can be used (reload from config)
+            // Check if optimized mode can be used (from the saved values just loaded)
             bool hasSysRowVersion = table.CopyableFields
                 .Any(f => f.Equals("SYSROWVERSION", StringComparison.OrdinalIgnoreCase));
 
             byte[]? tier2Ts = _timestampManager.GetTier2Timestamp(table.TableName);
             byte[]? axdbTs = _timestampManager.GetAxDBTimestamp(table.TableName);
 
-            // Debug logging
-            _logger($"[{table.TableName}] Has SysRowVersion: {hasSysRowVersion}, Tier2 TS: {(tier2Ts != null ? "found" : "null")}, AxDB TS: {(axdbTs != null ? "found" : "null")}");
-
             bool useOptimizedMode = hasSysRowVersion && tier2Ts != null && axdbTs != null;
+
+            // -notruncate exempts the table from the global "Force truncate mode"; an explicit
+            // -truncate on the strategy line still forces TRUNCATE.
+            bool useTruncate = strategy.UseTruncate || (_config.TruncateAllTables && !strategy.NoTruncate);
+
+            bool changed = table.StrategyType != strategy.StrategyType ||
+                           table.RecIdCount != strategy.RecIdCount ||
+                           !string.Equals(table.SqlTemplate, strategy.SqlTemplate, StringComparison.Ordinal) ||
+                           table.UseTruncate != useTruncate ||
+                           table.NoTruncate != strategy.NoTruncate ||
+                           table.UseOptimizedMode != useOptimizedMode ||
+                           table.RecordsToCopy != recordsToCopy ||
+                           !string.Equals(table.FetchSql, fetchSql, StringComparison.Ordinal);
 
             // Update table with new strategy
             table.StrategyType = strategy.StrategyType;
             table.RecIdCount = strategy.RecIdCount;
             table.SqlTemplate = strategy.SqlTemplate;
-            table.UseTruncate = strategy.UseTruncate || _config.TruncateAllTables;
+            table.UseTruncate = useTruncate;
+            table.NoTruncate = strategy.NoTruncate;
             table.RecordsToCopy = recordsToCopy;
             table.EstimatedSizeMB = estimatedSizeMB;
             table.FetchSql = fetchSql;
@@ -714,11 +788,109 @@ namespace DBSyncTool.Services
             table.StoredAxDBTimestamp = axdbTs;
             table.StoredMaxRecId = _maxRecIdManager.GetMaxRecId(table.TableName);
 
-            _logger($"Re-applied strategy for {table.TableName}: {table.StrategyDisplay}");
-            if (useOptimizedMode)
+            return changed;
+        }
+
+        /// <summary>
+        /// Re-applies the current configuration to the already discovered table list, right
+        /// before a Process Tables run:
+        ///  - successfully inserted tables are left alone (never copied twice)
+        ///  - tables now matched by Tables to Exclude, or no longer matched by Tables to Copy,
+        ///    are set to Excluded and skipped
+        ///  - failed tables are re-queued as Pending so a fixed strategy can be retried
+        ///  - every remaining table gets the current copy strategy and saved values
+        /// A table that is no longer excluded is NOT brought back: it has no discovered
+        /// metadata (TableId, field list), which only Discover Tables can provide.
+        /// </summary>
+        private async Task ReapplyFiltersAndStrategiesAsync()
+        {
+            // Parse first - an invalid strategy line must fail the run before anything changes
+            var strategyOverrides = ParseStrategyOverrides(_config.StrategyOverrides);
+
+            var inclusionPatterns = GetPatterns(_config.TablesToInclude);
+            var exclusionPatterns = GetPatterns(
+                CombineExclusionPatterns(_config.TablesToExclude, _config.SystemExcludedTables));
+            var systemTableNames = GetEnabledSystemTableNames();
+
+            // Saved values may have been cleared or updated since the list was discovered
+            _timestampManager.LoadFromConfig(_config);
+            _maxRecIdManager.LoadFromConfig(_config);
+
+            List<TableInfo> candidates;
+            int alreadyInserted;
+            lock (_tablesLock)
             {
-                _logger($"[{table.TableName}] Optimization enabled (timestamps found)");
+                candidates = _tables
+                    .Where(t => t.Status != TableStatus.Inserted && t.Status != TableStatus.Excluded)
+                    .ToList();
+                alreadyInserted = _tables.Count(t => t.Status == TableStatus.Inserted);
             }
+
+            int newlyExcluded = 0;
+            int requeued = 0;
+            int strategyChanged = 0;
+
+            foreach (var table in candidates)
+            {
+                bool isSystem = table.StrategyType == CopyStrategyType.System;
+
+                // Same filters Discover Tables applies, plus the System list toggles
+                bool excluded = !MatchesAnyPattern(table.TableName, inclusionPatterns) ||
+                                MatchesAnyPattern(table.TableName, exclusionPatterns) ||
+                                (isSystem && !systemTableNames.Contains(table.TableName));
+
+                if (excluded)
+                {
+                    ReleaseTableMemory(table);
+                    table.Status = TableStatus.Excluded;
+                    table.Error = string.Empty;
+                    _logger($"[{table.TableName}] Now excluded by the current settings - will not be processed");
+                    newlyExcluded++;
+                    continue;
+                }
+
+                bool failed = table.Status == TableStatus.FetchError ||
+                              table.Status == TableStatus.InsertError;
+
+                if (isSystem)
+                {
+                    // System tables ignore the copy strategies; a failed one is re-validated
+                    // against Tier2/AxDB, which may set FetchError again (missing table or
+                    // differing schema) - it then stays failed instead of being re-queued.
+                    if (failed)
+                    {
+                        ReleaseTableMemory(table);
+                        table.Status = TableStatus.Pending;
+                        table.Error = string.Empty;
+                        await ReapplyStrategyForTable(table);
+                        if (table.Status == TableStatus.Pending)
+                            requeued++;
+                    }
+                    continue;
+                }
+
+                if (failed)
+                {
+                    ReleaseTableMemory(table);
+                    table.Status = TableStatus.Pending;
+                    table.Error = string.Empty;
+                    requeued++;
+                }
+
+                var strategy = GetStrategy(table.TableName, strategyOverrides);
+                if (ApplyStrategyToTable(table, strategy))
+                {
+                    _logger($"[{table.TableName}] Strategy re-applied: {table.StrategyDisplay} ({table.RecordsToCopy:N0} records)");
+                    strategyChanged++;
+                }
+            }
+
+            _logger($"Current settings re-applied: {alreadyInserted} already inserted (skipped), " +
+                    $"{requeued} failed table(s) re-queued, {newlyExcluded} newly excluded, " +
+                    $"{strategyChanged} strategy change(s)");
+
+            if (newlyExcluded > 0 || requeued > 0 || strategyChanged > 0)
+                OnTablesUpdated();
         }
 
 
@@ -1690,16 +1862,32 @@ namespace DBSyncTool.Services
 
         private StrategyOverride ParseStrategyLine(string line)
         {
-            // Check for -truncate flag at the end
+            // Trailing flags: -truncate forces TRUNCATE, -notruncate exempts the table from
+            // "Force truncate mode". Both may be written in any order; combining them is an error.
             bool useTruncate = false;
-            string workingLine = line;
+            bool noTruncate = false;
+            string workingLine = line.Trim();
 
-            // Check for -truncate flag
-            if (workingLine.EndsWith(" -truncate", StringComparison.OrdinalIgnoreCase))
+            while (true)
             {
-                useTruncate = true;
-                workingLine = workingLine.Substring(0, workingLine.Length - 10).Trim();
+                if (workingLine.EndsWith(" -truncate", StringComparison.OrdinalIgnoreCase))
+                {
+                    useTruncate = true;
+                    workingLine = workingLine.Substring(0, workingLine.Length - " -truncate".Length).Trim();
+                }
+                else if (workingLine.EndsWith(" -notruncate", StringComparison.OrdinalIgnoreCase))
+                {
+                    noTruncate = true;
+                    workingLine = workingLine.Substring(0, workingLine.Length - " -notruncate".Length).Trim();
+                }
+                else
+                {
+                    break;
+                }
             }
+
+            if (useTruncate && noTruncate)
+                throw new Exception("Invalid format: -truncate and -notruncate cannot be combined");
 
             // Split by pipe
             var parts = workingLine.Split('|');
@@ -1717,7 +1905,8 @@ namespace DBSyncTool.Services
                     TableName = tableName,
                     StrategyType = CopyStrategyType.RecId,
                     RecIdCount = _config.DefaultRecordCount,
-                    UseTruncate = useTruncate
+                    UseTruncate = useTruncate,
+                    NoTruncate = noTruncate
                 };
             }
 
@@ -1726,7 +1915,7 @@ namespace DBSyncTool.Services
             // Case 2: TableName|sql:... (SQL without explicit count)
             if (part1.StartsWith("sql:", StringComparison.OrdinalIgnoreCase))
             {
-                return ParseSqlStrategy(tableName, part1, null, useTruncate);
+                return ParseSqlStrategy(tableName, part1, null, useTruncate, noTruncate);
             }
 
             // Case 3: TableName|Number (RecId strategy) - supports 'm'/'M' suffix for millions (e.g., 10m = 10,000,000)
@@ -1742,7 +1931,7 @@ namespace DBSyncTool.Services
                     if (part2.StartsWith("sql:", StringComparison.OrdinalIgnoreCase))
                     {
                         // Case 4: TableName|Number|sql:... (SQL with explicit count)
-                        return ParseSqlStrategy(tableName, part2, count, useTruncate);
+                        return ParseSqlStrategy(tableName, part2, count, useTruncate, noTruncate);
                     }
                     else
                     {
@@ -1755,7 +1944,8 @@ namespace DBSyncTool.Services
                     TableName = tableName,
                     StrategyType = CopyStrategyType.RecId,
                     RecIdCount = count,
-                    UseTruncate = useTruncate
+                    UseTruncate = useTruncate,
+                    NoTruncate = noTruncate
                 };
             }
 
@@ -1778,7 +1968,7 @@ namespace DBSyncTool.Services
             return int.TryParse(input, out count);
         }
 
-        private StrategyOverride ParseSqlStrategy(string tableName, string sqlPart, int? recordCount, bool useTruncate)
+        private StrategyOverride ParseSqlStrategy(string tableName, string sqlPart, int? recordCount, bool useTruncate, bool noTruncate)
         {
             // Extract SQL after "sql:" prefix
             string sql = sqlPart.Substring(4).Trim();
@@ -1796,7 +1986,8 @@ namespace DBSyncTool.Services
                 StrategyType = CopyStrategyType.Sql,
                 RecIdCount = recordCount,
                 SqlTemplate = sql,
-                UseTruncate = useTruncate
+                UseTruncate = useTruncate,
+                NoTruncate = noTruncate
             };
         }
 
@@ -1812,7 +2003,8 @@ namespace DBSyncTool.Services
                 StrategyType = CopyStrategyType.RecId,
                 RecIdCount = _config.DefaultRecordCount,
                 SqlTemplate = string.Empty,
-                UseTruncate = false
+                UseTruncate = false,
+                NoTruncate = false
             };
         }
 
@@ -1963,6 +2155,7 @@ namespace DBSyncTool.Services
         public int? RecIdCount { get; set; }      // For RecId strategy or SQL with explicit count
         public string SqlTemplate { get; set; } = string.Empty;  // For SQL strategy (raw template with * and @recordCount)
         public bool UseTruncate { get; set; }
+        public bool NoTruncate { get; set; }     // -notruncate: "Force truncate mode" does not apply to this table
     }
 
     // Comparer for SQL Server timestamps

@@ -392,14 +392,17 @@ namespace DBSyncTool
                 "  @sysRowVersionFilter  Replaced with SysRowVersion >= threshold AND RecId >= minRecId\n" +
                 "                        (Required for SQL strategies to use INCREMENTAL optimization)\n\n" +
                 "Flags:\n" +
-                "  -truncate      Force TRUNCATE instead of delta comparison\n\n" +
+                "  -truncate      Force TRUNCATE instead of delta comparison\n" +
+                "  -notruncate    Ignore the 'Force truncate mode' checkbox for this table\n" +
+                "                 (table keeps the normal mode; cannot be combined with -truncate)\n\n" +
                 "Examples:\n" +
                 "  CUSTTABLE\n" +
                 "  SALESLINE|10000\n" +
                 "  ECORESATTRIBUTEVALUE|10m\n" +
                 "  INVENTTRANS|sql:SELECT * FROM INVENTTRANS WHERE DATAAREAID='USMF'\n" +
                 "  CUSTTRANS|5000|sql:SELECT TOP (@recordCount) * FROM CUSTTRANS WHERE BLOCKED=0\n" +
-                "  VENDTABLE|5000 -truncate\n\n" +
+                "  VENDTABLE|5000 -truncate\n" +
+                "  INVENTTRANS|50000 -notruncate\n\n" +
                 "Examples with optimization:\n" +
                 "  INVENTDIM|50000|sql:SELECT * FROM INVENTDIM WHERE DATAAREAID='1000' AND @sysRowVersionFilter ORDER BY RecId DESC");
 
@@ -1076,6 +1079,15 @@ namespace DBSyncTool
             btnProcessTables.Name = "btnProcessTables";
             btnProcessTables.Size = new Size(120, 30);
             btnProcessTables.Text = "Process Tables";
+            ToolTip processTablesTooltip = new ToolTip();
+            processTablesTooltip.SetToolTip(btnProcessTables,
+                "Copies every table that is not yet inserted.\n\n" +
+                "Before starting, the current settings are re-applied to the list:\n" +
+                "  - already inserted tables are skipped\n" +
+                "  - Tables to Exclude / Tables to Copy are re-applied\n" +
+                "  - failed tables are retried with the current Copy strategy\n\n" +
+                "So after a failure you can fix the strategy (or exclude the table)\n" +
+                "and press this button again - no new Discover Tables needed.");
             btnProcessTables.Click += BtnProcessTables_Click;
 
             btnRetryFailed.Location = new Point(282, 220);

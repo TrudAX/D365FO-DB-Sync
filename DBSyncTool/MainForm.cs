@@ -618,7 +618,9 @@ namespace DBSyncTool
             bool hasSelection = dgvTables.SelectedRows.Count > 0;
 
             btnPrepareTableList.Enabled = !_isExecuting;
-            btnProcessTables.Enabled = !_isExecuting && hasPendingTables;
+            // Process Tables also re-queues failed tables, so it stays available when only
+            // failed ones are left (fix the strategy or exclude the table, then press again)
+            btnProcessTables.Enabled = !_isExecuting && (hasPendingTables || hasFailedTables);
             btnRetryFailed.Enabled = !_isExecuting && hasFailedTables;
             btnProcessSelected.Enabled = !_isExecuting && hasSelection && _orchestrator != null;
             btnRunAll.Enabled = !_isExecuting;
@@ -870,11 +872,30 @@ namespace DBSyncTool
 
         private async void BtnProcessTables_Click(object sender, EventArgs e)
         {
+            // Process Tables re-applies the Copy strategy to the discovered list, so the same
+            // duplicate check as Discover Tables applies (last line would silently win)
+            var duplicates = GetStrategyDuplicates(txtStrategyOverrides.Text);
+            if (duplicates.Count > 0)
+            {
+                MessageBox.Show(
+                    $"Duplicate tables in Per-Table Strategy:\n\n{string.Join(", ", duplicates)}\n\nFix duplicates before processing tables.",
+                    "Duplicate Strategy Entries", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
             await ExecuteOperationAsync(async () =>
             {
                 if (_orchestrator != null)
                 {
                     await _orchestrator.ProcessTablesAsync();
+
+                    // Process Tables re-applies the current strategy before running, so the
+                    // timestamps just written belong to it - stop re-clearing those tables
+                    foreach (var table in _orchestrator.GetTables()
+                                 .Where(t => t.Status == TableStatus.Inserted))
+                    {
+                        _pendingStrategyClears.Remove(table.TableName);
+                    }
                 }
             });
         }
