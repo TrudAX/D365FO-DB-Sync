@@ -336,7 +336,7 @@ Critical optimization in `Models/SqlDictionaryCache.cs`:
 - Two separate exclusion lists: user-defined (`TablesToExclude`) and system-level (`SystemExcludedTables`)
 - Strategy overrides use pipe-delimited format parsed in `CopyOrchestrator`
 - `ParallelWorkers` setting controls concurrent table processing (default: 10)
-- Timestamp storage: `Tier2Timestamps` and `AxDBTimestamps` store newline-separated entries (`TableName|0xHEXVALUE`)
+- Saved values storage — newline-separated `TABLENAME,value` entries, **comma**-separated (not pipe), table name uppercased: `Tier2Timestamps` and `AxDBTimestamps` hold `TABLENAME,0xHEXVALUE`, `MaxTransferredRecIds` holds `TABLENAME,12345`. Written by `TimestampManager.FormatTimestampText` / `MaxRecIdManager.FormatMaxRecIdText` and parsed back by their `Parse*` counterparts; `SavedValuesHelper` splits on the same comma when clearing a table's values
 - `TruncateThresholdPercent` controls INCREMENTAL vs TRUNCATE mode decision (default: 40)
 - `PowerShellScriptPath`: Path to .ps1 script executed after backup
 - `PowerShellAutoExecute`: Whether to auto-run PowerShell script after successful backup
