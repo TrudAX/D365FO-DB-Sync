@@ -16,6 +16,7 @@ namespace DBSyncTool.Models
         public bool UseTruncate { get; set; }    // -truncate flag
         public bool NoTruncate { get; set; }     // -notruncate flag: table ignores "Force truncate mode"
         public double TruncateThresholdPercent { get; set; }  // From config, used in delta comparison optimization
+        public int DisableIndexesThreshold { get; set; }      // From config, rows needed before NC indexes are disabled
 
         // Tier2 Info
         public long Tier2RowCount { get; set; }

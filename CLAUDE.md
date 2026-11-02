@@ -280,6 +280,77 @@ TableName|RecordCount|sql:CustomQuery -truncate|-notruncate
 - `BtnProcessTables_Click` rejects duplicate strategy lines first (same check as Discover Tables), and the orchestrator parses all strategy lines before changing anything, so an invalid line aborts the run instead of half-applying it.
 - Every re-applied strategy, every newly excluded table and a summary line are written to the log.
 
+### Index Handling on TRUNCATE-Mode Loads
+
+A table that is reloaded in full is emptied first, which makes two things possible that are not
+available for a partial load. Both are implemented in `AxDbDataService` and apply **only** when the
+table was actually emptied (`DeleteExistingRecordsAsync` returns `true`, i.e. TRUNCATE or its DELETE
+fallback ran) - a delta/incremental insert into a populated table keeps the old behaviour.
+
+**Minimally logged bulk insert** (`BulkInsertAsync`) - `SqlBulkCopyOptions.TableLock` plus
+`BatchSize = 0` (one batch). The table must still be empty when the batch starts, so the default
+`BatchSize = 10000` defeats this: only the first batch sees an empty table and everything after it is
+fully logged. `BatchSize` does **not** affect client memory - `SqlBulkCopy` streams rows out of the
+`DataTable` and never accumulates a batch of its own (measured: peak working set identical across
+batch sizes, the `DataTable` is the only large allocation).
+
+**Disabling nonclustered indexes** (`DisableIndexesForLoadAsync` → `RebuildIndexesAsync`) when the
+load has at least `DisableIndexesThreshold` rows (default 50,000; 0 switches it off). Set on the
+Connection tab under **Execution Settings** as *Disable indexes over N records*.
+
+- The **clustered index is never touched** - disabling it makes the whole table unreadable.
+- Unique indexes and the RecId primary key **are** included; that is where most of the saving is.
+- An index that backs a key referenced by a **foreign key is excluded**. SQL Server allows the
+  DISABLE there (it only warns) but silently disables the foreign key with it, and a later REBUILD
+  does **not** restore the constraint - it stays `is_disabled = 1, is_not_trusted = 1`. AxDB has a
+  handful of real foreign keys, so this exclusion matters.
+- Only plain `NONCLUSTERED` indexes are considered, so columnstore/XML/spatial are left alone.
+- The rebuild runs **before** `UpdateSequenceAsync`, which reads `MAX(RecId)` and wants its index back.
+- Every exit path rebuilds, including errors and cancellation (`TryRebuildAfterFailureAsync`, which
+  never masks the original exception). Each index is attempted even if an earlier one fails, so one
+  duplicate-key failure does not leave the rest disabled.
+
+**Measured on DIRPARTYLOCATION** (2,517,166 rows, 650 MB, 1 clustered + 5 nonclustered indexes,
+AxDB in SIMPLE recovery, data already fetched so only the AxDB side is timed):
+
+| | insert | rebuild | total | log written |
+|---|---|---|---|---|
+| previous behaviour | 86.7s | - | **86.7s** | 1,400 MB |
+| + TABLOCK only | 81.7s | - | 81.7s | 1,381 MB |
+| + disable/rebuild only | 29.8s | 15.1s | 44.9s | 602 MB |
+| + TABLOCK + one batch | 33.4s | - | 33.4s | 8 MB |
+| **all three** | 11.3s | 14.6s | **25.9s** | 7 MB |
+
+**Crash protection, and whose indexes these are.** Before the ALTERs run, the index names are
+written to `Config/DisabledIndexes/{ConfigName}_{TableName}.json` (`Helpers/DisabledIndexStore.cs`),
+and the file is deleted as soon as every index is back - so a file on disk means a load did not
+finish. The folder itself is never deleted.
+
+The file name is prefixed with the active configuration (`DisabledIndexStore.ConfigName`, set by
+`MainForm.LoadConfigurationIntoUI` and on rename) and `ListAll()` only returns files with that
+prefix: each configuration points at its own AxDB, so a leftover from another one says nothing
+about this database and must not be reported, rebuilt or allowed to block a run.
+
+Those files are what makes an index **ours**, and that distinction is not optional: a D365FO
+database normally has disabled indexes that have nothing to do with this tool (a real AxDB here had
+**73 of them across 14 tables** before the tool had ever run). Never drive anything off a bare
+`sys.indexes.is_disabled` scan.
+
+- `GetAllDisabledIndexesAsync` - every disabled index, whoever disabled it. Informational only;
+  used to tell the user "AxDB has N disabled indexes this tool did not disable".
+- `GetOwnDisabledIndexesAsync` - the breadcrumb entries that are **still** disabled in AxDB. An
+  index we recorded but that is enabled again (rebuilt by hand, or the program died before the
+  ALTER ran) drops out, and a breadcrumb with nothing left disabled is deleted as it goes.
+- `RebuildOwnDisabledIndexesAsync` - rebuilds only that set. The **Rebuild Indexes** button calls it.
+- `ExecuteOperationAsync` calls `CheckDisabledIndexesAsync` before every operation, which uses the
+  owned set and **refuses to start** while any of it is still disabled - a copy run with a unique
+  index disabled can insert duplicates unnoticed, after which that index can never be rebuilt.
+  Driving this off the raw scan instead would block every operation on a normal AxDB.
+
+Each of the three has an overload taking a `SqlConnection` so the logic can be exercised without
+the SQL-authentication connection string. If AxDB cannot be reached the check logs a warning and
+lets the operation proceed, so the real connection error is what the user sees.
+
 ### Strategy Changes vs Saved Values
 
 Saved values (SysRowVersion timestamps + MaxRecId, **Saved Values** tab) put a table into INCREMENTAL mode, which fetches only rows newer than the stored timestamp. A strategy edit that *widens* the fetch (for example raising the record count) would therefore not be applied on the next run — but an edit that narrows it works fine with the saved values, so they are never cleared without asking. `Helpers/SavedValuesHelper.cs` implements the detection:
@@ -336,6 +407,7 @@ Critical optimization in `Models/SqlDictionaryCache.cs`:
 - Two separate exclusion lists: user-defined (`TablesToExclude`) and system-level (`SystemExcludedTables`)
 - Strategy overrides use pipe-delimited format parsed in `CopyOrchestrator`
 - `ParallelWorkers` setting controls concurrent table processing (default: 10)
+- `DisableIndexesThreshold`: rows needed before nonclustered indexes are disabled for a TRUNCATE-mode load (default: 50000, 0 = off) — see [Index Handling on TRUNCATE-Mode Loads](#index-handling-on-truncate-mode-loads)
 - Saved values storage — newline-separated `TABLENAME,value` entries, **comma**-separated (not pipe), table name uppercased: `Tier2Timestamps` and `AxDBTimestamps` hold `TABLENAME,0xHEXVALUE`, `MaxTransferredRecIds` holds `TABLENAME,12345`. Written by `TimestampManager.FormatTimestampText` / `MaxRecIdManager.FormatMaxRecIdText` and parsed back by their `Parse*` counterparts; `SavedValuesHelper` splits on the same comma when clearing a table's values
 - `TruncateThresholdPercent` controls INCREMENTAL vs TRUNCATE mode decision (default: 40)
 - `PowerShellScriptPath`: Path to .ps1 script executed after backup
@@ -453,9 +525,11 @@ Used when changes ≥ threshold OR `-truncate` flag OR first run with excess rec
 
 1. `TRUNCATE TABLE AxDB.TableName`
 2. Fetch all records from Tier2 using copy strategy
-3. Bulk insert all records
-4. Update sequence to max(RecId)+1
-5. Save new timestamps (Tier2 and AxDB max values)
+3. Disable the nonclustered indexes if the load is at least `DisableIndexesThreshold` rows
+4. Bulk insert all records (TABLOCK, single batch)
+5. Rebuild the disabled indexes
+6. Update sequence to max(RecId)+1
+7. Save new timestamps (Tier2 and AxDB max values)
 
 **Triggers TRUNCATE mode when:**
 - Change percentage ≥ threshold (default 40%)
@@ -522,7 +596,7 @@ Used for tables without SysRowVersion OR when optimization not available:
 **Get SQL Feature** (right-click context menu in MainForm)
 - Copies to the clipboard a preview of everything the selected table(s) will go through, without executing anything
 - Built by `Helpers/SqlPreviewBuilder.cs` (a pure function of `TableInfo` + `AppConfiguration`, so it can be rendered/tested outside the UI)
-- **Must stay in sync** with `CopyOrchestrator.ProcessSingleTableAsync` / `ProcessTableOptimizedAsync` / `ProcessTableStandardModeAsync` / `ProcessTableSystemModeAsync` and `AxDbDataService.InsertDataAsync` / `ExecuteIncrementalDeletesAsync` / `UpdateSequenceAsync`
+- **Must stay in sync** with `CopyOrchestrator.ProcessSingleTableAsync` / `ProcessTableOptimizedAsync` / `ProcessTableStandardModeAsync` / `ProcessTableSystemModeAsync` and `AxDbDataService.InsertDataAsync` / `ExecuteIncrementalDeletesAsync` / `UpdateSequenceAsync` / `DisableIndexesForLoadAsync` / `BulkInsertAsync` / `RebuildIndexesAsync` (`AppendEmptyTableLoad` renders the last three)
 - `GetPreviewRoute` reproduces the runtime routing exactly: **System → UseTruncate (skips optimization) → UseOptimizedMode → standard**, including the fallback for a SQL strategy with no `@sysRowVersionFilter` (which drops to standard inside `ProcessTableOptimizedAsync`)
 - Header states the route and *why*, plus the inputs that drive it: Tier2 rows, effective record count, threshold %, presence of SysRowVersion/RECVERSION, saved timestamps and MaxRecId (marked "present but NOT used in this mode" when the route ignores them), AxDB TableId and sequence name
 - Branches that depend on live data are shown as labelled alternatives (TRUNCATE vs INCREMENTAL; delta comparison B1/B2/B3), while branches ruled out by the table's own properties are omitted or shown as "Skipped: …"
@@ -586,7 +660,7 @@ Used for tables without SysRowVersion OR when optimization not available:
 ### Database Operations
 - Insert operations use transaction with rollback on error
 - Triggers always re-enabled in finally block even on error
-- SqlBulkCopy settings: table lock enabled, batch size 10,000 rows
+- SqlBulkCopy settings: batch size 10,000 rows for inserts into a populated table; a load into a table that was just emptied uses TABLOCK and a single batch instead, so it is minimally logged — see [Index Handling on TRUNCATE-Mode Loads](#index-handling-on-truncate-mode-loads)
 - Connection timeout only used for Tier2 (default: 3 seconds)
 - Command timeout: Tier2 default 600 seconds, AxDB default 0 (unlimited)
 
@@ -637,3 +711,4 @@ Used for tables without SysRowVersion OR when optimization not available:
 - Error column truncates to 50 chars, full error in tooltip
 - Action buttons enabled/disabled based on execution state via event handlers
 - Fields to Exclude configured on Connection tab (next to System Excluded Tables)
+- **Execution Settings** on the Connection tab holds Parallel Workers and *Disable indexes over N records* plus the **Rebuild Indexes** button; the button is the only operation that is not blocked by `CheckDisabledIndexesAsync`

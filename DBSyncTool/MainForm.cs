@@ -310,6 +310,9 @@ namespace DBSyncTool
 
         private void LoadConfigurationIntoUI()
         {
+            // Breadcrumb files are per configuration: each one points at its own AxDB
+            DisabledIndexStore.ConfigName = _currentConfig.ConfigName;
+
             // Pending clears belong to the configuration being replaced
             _pendingStrategyClears.Clear();
 
@@ -327,6 +330,8 @@ namespace DBSyncTool
             nudAxDbCmdTimeout.Value = _currentConfig.AxDbConnection.CommandTimeout;
 
             nudParallelWorkers.Value = _currentConfig.ParallelWorkers;
+            nudDisableIndexesThreshold.Value = Math.Max(0,
+                Math.Min(nudDisableIndexesThreshold.Maximum, _currentConfig.DisableIndexesThreshold));
 
             txtSystemExcludedTables.Text = _currentConfig.SystemExcludedTables;
             chkShowExcludedTables.Checked = _currentConfig.ShowExcludedTables;
@@ -413,6 +418,7 @@ namespace DBSyncTool
             _currentConfig.AxDbConnection.CommandTimeout = (int)nudAxDbCmdTimeout.Value;
 
             _currentConfig.ParallelWorkers = (int)nudParallelWorkers.Value;
+            _currentConfig.DisableIndexesThreshold = (int)nudDisableIndexesThreshold.Value;
 
             _currentConfig.SystemExcludedTables = txtSystemExcludedTables.Text;
             _currentConfig.ShowExcludedTables = chkShowExcludedTables.Checked;
@@ -789,6 +795,7 @@ namespace DBSyncTool
                 {
                     SaveConfigurationFromUI();
                     _currentConfig.ConfigName = newName;
+                    DisabledIndexStore.ConfigName = newName;
                     _configManager.SaveConfiguration(_currentConfig);
                     RefreshConfigDropdown();
                     Log($"Configuration saved as '{newName}'");
@@ -868,6 +875,117 @@ namespace DBSyncTool
                 // so the clear no longer has to be re-applied on later saves
                 _pendingStrategyClears.Clear();
             });
+        }
+
+        /// <summary>
+        /// Rebuilds every disabled nonclustered index in AxDB. Needed when the program was
+        /// killed while a TRUNCATE-mode load had them turned off - no operation will start
+        /// until they are back.
+        /// </summary>
+        private async void BtnRebuildIndexes_Click(object sender, EventArgs e)
+        {
+            if (_isExecuting)
+            {
+                MessageBox.Show("Wait for the current operation to finish before rebuilding indexes.",
+                    "Operation Running", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            SaveConfigurationFromUI();
+
+            try
+            {
+                btnRebuildIndexes.Enabled = false;
+                var axDbService = new AxDbDataService(_currentConfig.AxDbConnection, Log);
+
+                // Only indexes this tool disabled. A D365FO database routinely has others
+                // disabled that are none of our business.
+                var disabled = await axDbService.GetOwnDisabledIndexesAsync(CancellationToken.None);
+
+                if (disabled.Count == 0)
+                {
+                    int foreignCount = (await axDbService.GetAllDisabledIndexesAsync(CancellationToken.None)).Count;
+                    string note = foreignCount > 0
+                        ? $"\n\nAxDB has {foreignCount} disabled index(es) that this tool did not disable. " +
+                          "They were not touched and are left alone."
+                        : "";
+                    MessageBox.Show($"No indexes are left disabled by this tool.{note}", "Rebuild Indexes",
+                        MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                if (MessageBox.Show(
+                        $"Rebuild {disabled.Count} index(es) left disabled by this tool?\n\n" +
+                        $"{DescribeDisabledIndexes(disabled)}\n\n" +
+                        "This can take several minutes on large tables.",
+                        "Rebuild Indexes", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+                {
+                    return;
+                }
+
+                Log($"Rebuilding {disabled.Count} disabled index(es)...");
+                var rebuilt = await Task.Run(() => axDbService.RebuildOwnDisabledIndexesAsync(CancellationToken.None));
+                Log($"Rebuilt {rebuilt.Count} index(es)");
+                MessageBox.Show($"Rebuilt {rebuilt.Count} index(es).", "Rebuild Indexes",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                Log($"ERROR rebuilding indexes: {ex.Message}");
+                MessageBox.Show($"Error: {ex.Message}", "Rebuild Indexes", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                btnRebuildIndexes.Enabled = true;
+            }
+        }
+
+        private static string DescribeDisabledIndexes(List<(string TableName, string IndexName)> disabled)
+        {
+            var lines = disabled.Take(20).Select(d => $"  {d.TableName}.{d.IndexName}").ToList();
+            if (disabled.Count > 20)
+                lines.Add($"  ... and {disabled.Count - 20} more");
+            return string.Join("\n", lines);
+        }
+
+        /// <summary>
+        /// Refuses to start an operation while AxDB has disabled nonclustered indexes. With a
+        /// unique index disabled a copy can insert duplicates unnoticed, and after that no
+        /// rebuild of that index can ever succeed - so this is a hard stop, not a warning.
+        /// Returns true when it is safe to continue.
+        /// </summary>
+        private async Task<bool> CheckDisabledIndexesAsync()
+        {
+            List<(string TableName, string IndexName)> disabled;
+            try
+            {
+                var axDbService = new AxDbDataService(_currentConfig.AxDbConnection, Log);
+                disabled = await axDbService.GetOwnDisabledIndexesAsync(CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                // AxDB unreachable: let the operation run and fail with its own, clearer error
+                Log($"Warning: could not check for disabled indexes: {ex.Message}");
+                return true;
+            }
+
+            // GetOwnDisabledIndexesAsync already pruned any breadcrumb that is clean again
+            if (disabled.Count == 0)
+                return true;
+
+            Log($"BLOCKED: {disabled.Count} index(es) left disabled by this tool - use Rebuild Indexes on the Connection tab");
+            foreach (var (table, index) in disabled)
+                Log($"  disabled: {table}.{index}");
+
+            MessageBox.Show(
+                $"{disabled.Count} index(es) are still disabled from a load that did not finish:\n\n" +
+                $"{DescribeDisabledIndexes(disabled)}\n\n" +
+                "Copying now could insert duplicate rows past a disabled unique index, after which " +
+                "that index can never be rebuilt.\n\n" +
+                "Use Rebuild Indexes on the Connection tab first.",
+                "Disabled Indexes", MessageBoxButtons.OK, MessageBoxIcon.Error);
+
+            return false;
         }
 
         private async void BtnProcessTables_Click(object sender, EventArgs e)
@@ -1624,6 +1742,11 @@ namespace DBSyncTool
                 // Save config from UI before every operation
                 SaveConfigurationFromUI();
                 _configManager.SaveConfiguration(_currentConfig);
+
+                // A killed load can leave nonclustered indexes disabled; nothing may run until
+                // they are back (see CheckDisabledIndexesAsync)
+                if (!await CheckDisabledIndexesAsync())
+                    return;
 
                 UpdateButtonStates();
                 _updateTimer.Start();

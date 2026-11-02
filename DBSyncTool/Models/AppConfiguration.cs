@@ -35,6 +35,10 @@ namespace DBSyncTool.Models
         // Parallel workers for merged fetch+insert workflow
         public int ParallelWorkers { get; set; } = 10;
 
+        // Rows threshold for disabling nonclustered indexes before a TRUNCATE-mode load.
+        // The indexes are rebuilt straight after the insert. 0 switches the optimization off.
+        public int DisableIndexesThreshold { get; set; } = 50000;
+
         // New threshold setting for SysRowVersion optimization
         public int TruncateThresholdPercent { get; set; } = 40;
 

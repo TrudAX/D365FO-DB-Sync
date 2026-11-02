@@ -108,6 +108,318 @@ namespace DBSyncTool.Services
             return await Tier2DataService.GetTablesColumnsAsync(_connectionString, _connectionSettings.CommandTimeout, tableNames);
         }
 
+
+        /// <summary>
+        /// Nonclustered indexes of a table that may be disabled for a bulk load.
+        ///
+        /// The clustered index is never included: disabling it makes the whole table
+        /// unreadable until it is rebuilt. Unique indexes and the RecId primary key ARE
+        /// included - that is where most of the saving is - except where the index backs a
+        /// key referenced by a foreign key, which SQL Server refuses to disable.
+        /// Only plain NONCLUSTERED indexes are considered, so columnstore/XML/spatial are
+        /// left alone.
+        /// </summary>
+        public async Task<List<string>> GetDisableableIndexesAsync(
+            string tableName, SqlConnection connection, CancellationToken cancellationToken)
+        {
+            const string query = @"
+                SELECT i.name
+                FROM sys.indexes i
+                WHERE i.object_id = OBJECT_ID(@TableName)
+                  AND i.type_desc = 'NONCLUSTERED'
+                  AND i.is_disabled = 0
+                  AND i.is_hypothetical = 0
+                  AND i.name IS NOT NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM sys.foreign_keys fk
+                      WHERE fk.referenced_object_id = i.object_id
+                        AND fk.key_index_id = i.index_id)
+                ORDER BY i.name";
+
+            var names = new List<string>();
+            using var cmd = new SqlCommand(query, connection);
+            cmd.Parameters.AddWithValue("@TableName", $"dbo.[{tableName}]");
+            cmd.CommandTimeout = TriggerCommandTimeoutSeconds;
+            using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                names.Add(reader.GetString(0));
+            return names;
+        }
+
+        /// <summary>
+        /// Every disabled index in the database, whoever disabled it. D365FO itself leaves
+        /// plenty of indexes disabled, so this is NOT a list of things to fix - use
+        /// <see cref="GetOwnDisabledIndexesAsync"/> for that. This one is only for telling the
+        /// user what is there.
+        /// </summary>
+        public async Task<List<(string TableName, string IndexName)>> GetAllDisabledIndexesAsync(
+            CancellationToken cancellationToken)
+        {
+            using var connection = new SqlConnection(_connectionString);
+            await connection.OpenAsync(cancellationToken);
+            return await GetAllDisabledIndexesAsync(connection, cancellationToken);
+        }
+
+        /// <inheritdoc cref="GetAllDisabledIndexesAsync(CancellationToken)"/>
+        public async Task<List<(string TableName, string IndexName)>> GetAllDisabledIndexesAsync(
+            SqlConnection connection, CancellationToken cancellationToken)
+        {
+            const string query = @"
+                SELECT OBJECT_NAME(i.object_id) AS TableName, i.name AS IndexName
+                FROM sys.indexes i
+                JOIN sys.tables t ON t.object_id = i.object_id
+                WHERE i.is_disabled = 1
+                  AND i.name IS NOT NULL
+                ORDER BY TableName, IndexName";
+
+            var result = new List<(string, string)>();
+            using var cmd = new SqlCommand(query, connection);
+            cmd.CommandTimeout = TriggerCommandTimeoutSeconds;
+            using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                result.Add((reader.GetString(0), reader.GetString(1)));
+            return result;
+        }
+
+        /// <summary>
+        /// The indexes THIS TOOL disabled that are still disabled in AxDB.
+        ///
+        /// Ownership comes from the breadcrumb files, never from sys.indexes: a D365FO database
+        /// normally has disabled indexes that have nothing to do with this tool, and touching
+        /// them would be wrong. An index we recorded but that is enabled again (rebuilt by hand,
+        /// or we were killed before the ALTER ran) drops out here, and a breadcrumb with nothing
+        /// left disabled is deleted as we go.
+        /// </summary>
+        public async Task<List<(string TableName, string IndexName)>> GetOwnDisabledIndexesAsync(
+            CancellationToken cancellationToken)
+        {
+            if (DisabledIndexStore.ListAll().Count == 0)
+                return new List<(string, string)>();  // nothing recorded: do not even connect
+
+            using var connection = new SqlConnection(_connectionString);
+            await connection.OpenAsync(cancellationToken);
+            return await GetOwnDisabledIndexesAsync(connection, cancellationToken);
+        }
+
+        /// <inheritdoc cref="GetOwnDisabledIndexesAsync(CancellationToken)"/>
+        public async Task<List<(string TableName, string IndexName)>> GetOwnDisabledIndexesAsync(
+            SqlConnection connection, CancellationToken cancellationToken)
+        {
+            var recorded = DisabledIndexStore.ListAll();
+            if (recorded.Count == 0)
+                return new List<(string, string)>();
+
+            var disabledNow = await GetAllDisabledIndexesAsync(connection, cancellationToken);
+            var disabledSet = new HashSet<string>(
+                disabledNow.Select(d => $"{d.TableName}|{d.IndexName}"), StringComparer.OrdinalIgnoreCase);
+
+            var own = new List<(string, string)>();
+            foreach (var entry in recorded)
+            {
+                var stillDisabled = entry.Indexes
+                    .Where(ix => disabledSet.Contains($"{entry.TableName}|{ix}"))
+                    .ToList();
+
+                if (stillDisabled.Count == 0)
+                {
+                    DisabledIndexStore.Remove(entry.TableName);
+                    continue;
+                }
+
+                foreach (string ix in stillDisabled)
+                    own.Add((entry.TableName, ix));
+            }
+
+            return own;
+        }
+
+        /// <summary>
+        /// Disables the given indexes and records them on disk first, so a breadcrumb survives
+        /// even if the program is killed between the write and the ALTER.
+        /// </summary>
+        private async Task DisableIndexesAsync(
+            string tableName, List<string> indexes, SqlConnection connection, CancellationToken cancellationToken)
+        {
+            if (indexes.Count == 0)
+                return;
+
+            var csb = new SqlConnectionStringBuilder(_connectionString);
+            DisabledIndexStore.Save(tableName, indexes, csb.DataSource, csb.InitialCatalog);
+
+            foreach (string index in indexes)
+            {
+                string sql = $"ALTER INDEX [{index}] ON [{tableName}] DISABLE";
+                _logger($"[AxDB SQL] {sql}");
+                await ExecuteNonQueryAsync(sql, connection, null, cancellationToken, TriggerCommandTimeoutSeconds);
+            }
+        }
+
+        /// <summary>
+        /// Rebuilds the given indexes. Every index is attempted even when one fails, so a single
+        /// duplicate-key failure on a unique index does not leave the other four disabled too.
+        /// The breadcrumb file is removed only when every index is back; otherwise it is rewritten
+        /// with whatever is still disabled. Throws if anything failed.
+        /// </summary>
+        private async Task RebuildIndexesAsync(
+            string tableName, List<string> indexes, SqlConnection connection, CancellationToken cancellationToken)
+        {
+            if (indexes.Count == 0)
+                return;
+
+            var failures = new List<string>();
+            var stillDisabled = new List<string>();
+            var stopwatch = Stopwatch.StartNew();
+
+            foreach (string index in indexes)
+            {
+                string sql = $"ALTER INDEX [{index}] ON [{tableName}] REBUILD";
+                _logger($"[AxDB SQL] {sql}");
+                try
+                {
+                    // The rebuild is the price paid for the faster insert; it gets the full
+                    // configured command timeout rather than the short DDL one.
+                    await ExecuteNonQueryAsync(sql, connection, null, CancellationToken.None,
+                        _connectionSettings.CommandTimeout);
+                }
+                catch (Exception ex)
+                {
+                    failures.Add($"{index}: {ex.Message}");
+                    stillDisabled.Add(index);
+                    _logger($"[AxDB] {tableName}: REBUILD of {index} FAILED - {ex.Message}");
+                }
+            }
+
+            stopwatch.Stop();
+
+            if (stillDisabled.Count == 0)
+            {
+                DisabledIndexStore.Remove(tableName);
+                _logger($"[AxDB] {tableName}: {indexes.Count} index(es) rebuilt in {stopwatch.Elapsed.TotalSeconds:F2}s");
+            }
+            else
+            {
+                var csb = new SqlConnectionStringBuilder(_connectionString);
+                DisabledIndexStore.Save(tableName, stillDisabled, csb.DataSource, csb.InitialCatalog);
+                throw new Exception(
+                    $"{stillDisabled.Count} index(es) on {tableName} could not be rebuilt and are STILL DISABLED - " +
+                    string.Join("; ", failures));
+            }
+        }
+
+        /// <summary>
+        /// Rebuilds the indexes this tool left disabled, and nothing else. Used by the Rebuild
+        /// Indexes button after the program was killed mid-load. Returns the ones it fixed.
+        /// </summary>
+        public async Task<List<string>> RebuildOwnDisabledIndexesAsync(CancellationToken cancellationToken)
+        {
+            using var connection = new SqlConnection(_connectionString);
+            await connection.OpenAsync(cancellationToken);
+            return await RebuildOwnDisabledIndexesAsync(connection, cancellationToken);
+        }
+
+        /// <inheritdoc cref="RebuildOwnDisabledIndexesAsync(CancellationToken)"/>
+        public async Task<List<string>> RebuildOwnDisabledIndexesAsync(
+            SqlConnection connection, CancellationToken cancellationToken)
+        {
+            var disabled = await GetOwnDisabledIndexesAsync(connection, cancellationToken);
+            var rebuilt = new List<string>();
+            var failures = new List<string>();
+
+            foreach (var (table, index) in disabled)
+            {
+                string sql = $"ALTER INDEX [{index}] ON [{table}] REBUILD";
+                _logger($"[AxDB SQL] {sql}");
+                try
+                {
+                    await ExecuteNonQueryAsync(sql, connection, null, cancellationToken,
+                        _connectionSettings.CommandTimeout);
+                    rebuilt.Add($"{table}.{index}");
+                }
+                catch (Exception ex)
+                {
+                    failures.Add($"{table}.{index}: {ex.Message}");
+                    _logger($"[AxDB] REBUILD of {table}.{index} FAILED - {ex.Message}");
+                }
+            }
+
+            // Re-evaluating prunes the breadcrumbs of every table that is clean again
+            await GetOwnDisabledIndexesAsync(connection, CancellationToken.None);
+
+            if (failures.Count > 0)
+                throw new Exception($"{failures.Count} index(es) could not be rebuilt - " + string.Join("; ", failures));
+
+            return rebuilt;
+        }
+
+        /// <summary>
+        /// Bulk inserts into a table that was just emptied.
+        ///
+        /// TABLOCK plus a single batch is what makes the load minimally logged: with the default
+        /// BatchSize only the first batch sees an empty table, so everything after it is fully
+        /// logged. On a 2.5M row table this is the difference between 1.4 GB and 7 MB of log.
+        /// BatchSize does not change client memory - SqlBulkCopy streams rows out of the
+        /// DataTable and never accumulates a batch of its own.
+        /// </summary>
+        private async Task BulkInsertAsync(
+            DataTable data, string tableName, bool tableIsEmpty, SqlConnection connection, CancellationToken cancellationToken)
+        {
+            var options = tableIsEmpty ? SqlBulkCopyOptions.TableLock : SqlBulkCopyOptions.Default;
+            using var bulkCopy = new SqlBulkCopy(connection, options, null);
+            bulkCopy.DestinationTableName = tableName;
+            bulkCopy.BatchSize = tableIsEmpty ? 0 : 10000;
+            bulkCopy.BulkCopyTimeout = _connectionSettings.CommandTimeout;
+
+            foreach (DataColumn column in data.Columns)
+                bulkCopy.ColumnMappings.Add(column.ColumnName, column.ColumnName);
+
+            await bulkCopy.WriteToServerAsync(data, cancellationToken);
+        }
+
+        /// <summary>
+        /// Disables the table's nonclustered indexes when this load is big enough to be worth
+        /// it. Returns the indexes that were turned off, which the caller must rebuild.
+        /// Only ever called for a table that was just emptied.
+        /// </summary>
+        private async Task<List<string>> DisableIndexesForLoadAsync(
+            TableInfo tableInfo, int rowCount, SqlConnection connection, CancellationToken cancellationToken)
+        {
+            int threshold = tableInfo.DisableIndexesThreshold;
+            if (threshold <= 0 || rowCount < threshold)
+                return new List<string>();
+
+            var indexes = await GetDisableableIndexesAsync(tableInfo.TableName, connection, cancellationToken);
+            if (indexes.Count == 0)
+            {
+                _logger($"[AxDB] {tableInfo.TableName}: no nonclustered index can be disabled, loading as-is");
+                return indexes;
+            }
+
+            _logger($"[AxDB] {tableInfo.TableName}: {rowCount:N0} rows >= {threshold:N0} threshold - " +
+                    $"disabling {indexes.Count} nonclustered index(es) for the load: {string.Join(", ", indexes)}");
+            await DisableIndexesAsync(tableInfo.TableName, indexes, connection, cancellationToken);
+            return indexes;
+        }
+
+        /// <summary>
+        /// Best-effort rebuild on the way out of a failed load. Never throws: the original
+        /// failure is what the user needs to see. If this cannot put the indexes back, the
+        /// breadcrumb file stays on disk and the next run is blocked by the pre-run scan.
+        /// </summary>
+        private async Task TryRebuildAfterFailureAsync(string tableName, List<string> indexes, SqlConnection connection)
+        {
+            if (indexes.Count == 0)
+                return;
+
+            try
+            {
+                await RebuildIndexesAsync(tableName, indexes, connection, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                _logger($"[AxDB] {tableName}: indexes left DISABLED after a failed load - {ex.Message}");
+            }
+        }
+
         /// <summary>
         /// Inserts data for a System table: TRUNCATE (with DELETE fallback) then bulk insert
         /// all rows. No delta comparison, no RecId/sequence handling, no timestamps.
@@ -117,6 +429,8 @@ namespace DBSyncTool.Services
         {
             using var connection = new SqlConnection(_connectionString);
             await connection.OpenAsync(cancellationToken);
+
+            var disabledIndexes = new List<string>();
 
             // Step 1: Disable triggers (harmless if the table has none)
             string disableTriggersSql = $"ALTER TABLE [{tableInfo.TableName}] DISABLE TRIGGER ALL";
@@ -131,32 +445,33 @@ namespace DBSyncTool.Services
                 deleteStopwatch.Stop();
                 tableInfo.DeleteTimeSeconds = (decimal)deleteStopwatch.Elapsed.TotalSeconds;
 
-                // Step 3: Bulk insert all fetched rows
+                // Step 3: Bulk insert all fetched rows. The table was just emptied, so the
+                // nonclustered indexes can be disabled for the load and rebuilt afterwards.
                 int rowCount = 0;
                 var insertStopwatch = Stopwatch.StartNew();
                 if (tableInfo.CachedData != null && tableInfo.CachedData.Rows.Count > 0)
                 {
+                    disabledIndexes = await DisableIndexesForLoadAsync(
+                        tableInfo, tableInfo.CachedData.Rows.Count, connection, cancellationToken);
+
                     _logger($"[AxDB] Bulk inserting {tableInfo.CachedData.Rows.Count} rows into {tableInfo.TableName}");
-                    using var bulkCopy = new SqlBulkCopy(connection);
-                    bulkCopy.DestinationTableName = tableInfo.TableName;
-                    bulkCopy.BatchSize = 10000;
-                    bulkCopy.BulkCopyTimeout = _connectionSettings.CommandTimeout;
-
-                    foreach (DataColumn column in tableInfo.CachedData.Columns)
-                    {
-                        bulkCopy.ColumnMappings.Add(column.ColumnName, column.ColumnName);
-                    }
-
-                    await bulkCopy.WriteToServerAsync(tableInfo.CachedData, cancellationToken);
+                    await BulkInsertAsync(tableInfo.CachedData, tableInfo.TableName, true, connection, cancellationToken);
                     rowCount = tableInfo.CachedData.Rows.Count;
                 }
                 insertStopwatch.Stop();
                 tableInfo.InsertTimeSeconds = (decimal)insertStopwatch.Elapsed.TotalSeconds;
 
+                await RebuildIndexesAsync(tableInfo.TableName, disabledIndexes, connection, cancellationToken);
+                disabledIndexes = new List<string>();
+
                 return rowCount;
             }
             finally
             {
+                // Put the indexes back even on error/cancellation - leaving them disabled would
+                // silently drop uniqueness enforcement on the table
+                await TryRebuildAfterFailureAsync(tableInfo.TableName, disabledIndexes, connection);
+
                 // Always re-enable triggers, even on error/cancellation
                 try
                 {
@@ -193,6 +508,8 @@ namespace DBSyncTool.Services
             await connection.OpenAsync(cancellationToken);
 
             DataTable? filteredDataToDispose = null;  // Track filtered DataTable for disposal - declared outside try for catch block access
+            var disabledIndexes = new List<string>();  // Indexes this load turned off - must be rebuilt in every exit path
+            bool tableEmptied = false;                 // True once the table has been truncated/emptied
 
             try
             {
@@ -334,8 +651,9 @@ namespace DBSyncTool.Services
                 }
                 else
                 {
-                    // Full delete: current behavior based on strategy
-                    await DeleteExistingRecordsAsync(tableInfo, connection, null, cancellationToken);
+                    // Full delete: current behavior based on strategy. A TRUNCATE (or its DELETE
+                    // fallback) leaves the table empty, which is what unlocks the fast load below.
+                    tableEmptied = await DeleteExistingRecordsAsync(tableInfo, connection, null, cancellationToken);
                 }
 
                 deleteStopwatch.Stop();
@@ -347,24 +665,22 @@ namespace DBSyncTool.Services
 
                 if (dataToInsert.Rows.Count > 0)
                 {
-                    using (var bulkCopy = new SqlBulkCopy(connection))
+                    if (tableEmptied)
                     {
-                        bulkCopy.DestinationTableName = tableInfo.TableName;
-                        bulkCopy.BatchSize = 10000;
-                        bulkCopy.BulkCopyTimeout = _connectionSettings.CommandTimeout;
-
-                        // Map columns
-                        foreach (DataColumn column in dataToInsert.Columns)
-                        {
-                            bulkCopy.ColumnMappings.Add(column.ColumnName, column.ColumnName);
-                        }
-
-                        await bulkCopy.WriteToServerAsync(dataToInsert, cancellationToken);
+                        disabledIndexes = await DisableIndexesForLoadAsync(
+                            tableInfo, dataToInsert.Rows.Count, connection, cancellationToken);
                     }
+
+                    await BulkInsertAsync(dataToInsert, tableInfo.TableName, tableEmptied, connection, cancellationToken);
                 }
 
                 insertStopwatch.Stop();
                 tableInfo.InsertTimeSeconds = (decimal)insertStopwatch.Elapsed.TotalSeconds;
+
+                // Rebuild before the sequence update: UpdateSequenceAsync reads MAX(RecId), which
+                // needs the RecId index back to be quick
+                await RebuildIndexesAsync(tableInfo.TableName, disabledIndexes, connection, cancellationToken);
+                disabledIndexes = new List<string>();
 
                 // Step 4: Enable triggers (always, even if errors occur)
                 string enableTriggersSql = $"ALTER TABLE [{tableInfo.TableName}] ENABLE TRIGGER ALL";
@@ -383,6 +699,10 @@ namespace DBSyncTool.Services
             }
             catch
             {
+                // Put the indexes back first - a half-loaded table with disabled unique indexes
+                // is far worse than a half-loaded table
+                await TryRebuildAfterFailureAsync(tableInfo.TableName, disabledIndexes, connection);
+
                 // Always try to re-enable triggers on error. Use CancellationToken.None so this
                 // still runs when the operation was cancelled, but keep a finite timeout so it
                 // cannot hang the worker.
@@ -404,12 +724,14 @@ namespace DBSyncTool.Services
         }
 
         /// <summary>
-        /// Deletes existing records based on the copy strategy and cleanup rules
+        /// Clears the rows this copy is about to replace. Returns true when the table was left
+        /// completely empty (TRUNCATE, or its DELETE fallback), which lets the caller load it
+        /// with TABLOCK in a single minimally logged batch.
         /// </summary>
-        private async Task DeleteExistingRecordsAsync(TableInfo tableInfo, SqlConnection connection, SqlTransaction? transaction, CancellationToken cancellationToken)
+        private async Task<bool> DeleteExistingRecordsAsync(TableInfo tableInfo, SqlConnection connection, SqlTransaction? transaction, CancellationToken cancellationToken)
         {
             if (tableInfo.CachedData == null || tableInfo.CachedData.Rows.Count == 0)
-                return;
+                return false;
 
             // Optimization: If Tier2 has fewer rows than we're configured to copy, use TRUNCATE
             // This means we're copying the entire source table, so TRUNCATE is much faster than DELETE
@@ -420,14 +742,14 @@ namespace DBSyncTool.Services
             {
                 _logger($"[AxDB] Optimization: Tier2 has {tableInfo.Tier2RowCount} rows, copying {tableInfo.RecordsToCopy} - using TRUNCATE instead of DELETE");
                 await TruncateWithFallbackAsync(tableInfo.TableName, connection, transaction, cancellationToken);
-                return;
+                return true;
             }
 
             // If UseTruncate flag is set, always truncate
             if (tableInfo.UseTruncate)
             {
                 await TruncateWithFallbackAsync(tableInfo.TableName, connection, transaction, cancellationToken);
-                return;
+                return true;
             }
 
             // Apply cleanup rules based on strategy type
@@ -435,9 +757,10 @@ namespace DBSyncTool.Services
             {
                 case CopyStrategyType.RecId:
                 case CopyStrategyType.Sql:
-                    // RecId/Sql: DELETE WHERE RecId >= @MinRecId
+                    // RecId/Sql: DELETE WHERE RecId >= @MinRecId - rows below MinRecId survive,
+                    // so the table is not empty afterwards
                     await DeleteByRecIdAsync(tableInfo, connection, transaction, cancellationToken);
-                    break;
+                    return false;
 
                 default:
                     throw new Exception($"Unsupported strategy type: {tableInfo.StrategyType}");

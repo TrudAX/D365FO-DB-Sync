@@ -16,6 +16,47 @@ namespace DBSyncTool.Helpers
         /// </summary>
         public enum PreviewRoute { System, Standard, Optimized }
 
+        /// <summary>
+        /// The load into a table that was just emptied: optional index disable, the bulk copy
+        /// itself, then the rebuild. Mirrors AxDbDataService.DisableIndexesForLoadAsync /
+        /// BulkInsertAsync / RebuildIndexesAsync - keep in sync with those.
+        /// </summary>
+        private static void AppendEmptyTableLoad(StringBuilder sql, TableInfo table, AppConfiguration config)
+        {
+            int threshold = config.DisableIndexesThreshold;
+            bool disables = threshold > 0 && table.RecordsToCopy >= threshold;
+
+            if (disables)
+            {
+                sql.AppendLine($"-- {table.RecordsToCopy:N0} rows >= {threshold:N0} threshold → the nonclustered indexes are disabled for the load:");
+                sql.AppendLine($"SELECT i.name FROM sys.indexes i");
+                sql.AppendLine($"WHERE i.object_id = OBJECT_ID('dbo.[{table.TableName}]')");
+                sql.AppendLine($"  AND i.type_desc = 'NONCLUSTERED' AND i.is_disabled = 0 AND i.is_hypothetical = 0 AND i.name IS NOT NULL");
+                sql.AppendLine($"  AND NOT EXISTS (SELECT 1 FROM sys.foreign_keys fk                 -- disabling one of these would");
+                sql.AppendLine($"                  WHERE fk.referenced_object_id = i.object_id      -- silently disable the FK too,");
+                sql.AppendLine($"                    AND fk.key_index_id = i.index_id)              -- and a REBUILD never restores it");
+                sql.AppendLine($"ALTER INDEX [<each index above>] ON [{table.TableName}] DISABLE");
+            }
+            else if (threshold > 0)
+            {
+                sql.AppendLine($"-- {table.RecordsToCopy:N0} rows < {threshold:N0} threshold → indexes stay enabled for the load");
+            }
+            else
+            {
+                sql.AppendLine("-- 'Disable indexes over' is 0 → indexes stay enabled for the load");
+            }
+
+            sql.AppendLine("-- SqlBulkCopy: all fetched rows, TABLOCK, one batch");
+            sql.AppendLine("--   the table is empty and AxDB is SIMPLE/BULK_LOGGED → minimally logged");
+
+            if (disables)
+            {
+                sql.AppendLine($"ALTER INDEX [<each index above>] ON [{table.TableName}] REBUILD       -- also on error/cancellation");
+                sql.AppendLine("--   a rebuild that fails (duplicate key on a unique index) leaves that index disabled");
+                sql.AppendLine("--   and blocks the next run until Rebuild Indexes has put it back");
+            }
+        }
+
         private static bool HasCopyableField(TableInfo table, string field)
         {
             return table.CopyableFields.Any(f => f.Equals(field, StringComparison.OrdinalIgnoreCase));
@@ -168,7 +209,7 @@ namespace DBSyncTool.Helpers
             sql.AppendLine("-- === STEP 2: TRUNCATE + INSERT (AxDB, no transaction) ===");
             sql.AppendLine($"ALTER TABLE [{table.TableName}] DISABLE TRIGGER ALL");
             sql.AppendLine($"TRUNCATE TABLE [{table.TableName}]                             -- falls back to DELETE FROM [{table.TableName}] if referenced by FK/view");
-            sql.AppendLine("-- SqlBulkCopy: all fetched rows, batch size 10,000");
+            AppendEmptyTableLoad(sql, table, config);
             sql.AppendLine($"ALTER TABLE [{table.TableName}] ENABLE TRIGGER ALL             -- always re-enabled, also on error");
             sql.AppendLine();
 
@@ -228,7 +269,7 @@ namespace DBSyncTool.Helpers
             {
                 sql.AppendLine("-- Branch A: TRUNCATE (forced) - no delta comparison");
                 sql.AppendLine($"TRUNCATE TABLE [{table.TableName}]                             -- falls back to DELETE FROM if referenced by FK/view");
-                sql.AppendLine("-- SqlBulkCopy: all fetched rows");
+                AppendEmptyTableLoad(sql, table, config);
                 sql.AppendLine("-- If Tier2 returned 0 rows the AxDB table is truncated and nothing is inserted");
             }
             else if (!hasRecVersion)
@@ -238,12 +279,15 @@ namespace DBSyncTool.Helpers
                 {
                     sql.AppendLine($"-- Tier2 rows ({table.Tier2RowCount:N0}) <= records to copy ({table.RecordsToCopy:N0}): whole table is copied");
                     sql.AppendLine($"TRUNCATE TABLE [{table.TableName}]                             -- falls back to DELETE FROM if referenced by FK/view");
+                    AppendEmptyTableLoad(sql, table, config);
                 }
                 else
                 {
+                    // Rows below MinRecId survive, so the table is not empty: no index disabling,
+                    // no TABLOCK, normal 10,000-row batches
                     sql.AppendLine($"DELETE FROM [{table.TableName}] WHERE RecId >= @MinRecId");
+                    sql.AppendLine("-- SqlBulkCopy: all fetched rows, batch size 10,000");
                 }
-                sql.AppendLine("-- SqlBulkCopy: all fetched rows");
             }
             else
             {
@@ -345,7 +389,7 @@ namespace DBSyncTool.Helpers
             sql.AppendLine(table.FetchSql);
             sql.AppendLine($"ALTER TABLE [{table.TableName}] DISABLE TRIGGER ALL");
             sql.AppendLine($"TRUNCATE TABLE [{table.TableName}]                             -- falls back to DELETE FROM if referenced by FK/view");
-            sql.AppendLine("-- SqlBulkCopy: all fetched rows");
+            AppendEmptyTableLoad(sql, table, config);
             sql.AppendLine($"ALTER TABLE [{table.TableName}] ENABLE TRIGGER ALL");
             sql.AppendLine("-- Then: sequence update + saved values (see bottom)");
             sql.AppendLine();

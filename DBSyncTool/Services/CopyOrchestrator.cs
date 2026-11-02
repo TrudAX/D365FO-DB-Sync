@@ -1133,6 +1133,7 @@ namespace DBSyncTool.Services
             table.Status = TableStatus.Inserting;
             table.UseTruncate = true;  // Force TRUNCATE instead of delta comparison
             table.TruncateThresholdPercent = _config.TruncateThresholdPercent;  // Pass threshold for delta comparison optimization
+            table.DisableIndexesThreshold = _config.DisableIndexesThreshold;
             OnTablesUpdated();
 
             await _axDbService.InsertDataAsync(table, cancellationToken);
@@ -1512,6 +1513,7 @@ namespace DBSyncTool.Services
                 // STAGE 2: INSERT (includes delete and insert operations)
                 table.Status = TableStatus.Inserting;
                 table.TruncateThresholdPercent = _config.TruncateThresholdPercent;  // Pass threshold for delta comparison optimization
+                table.DisableIndexesThreshold = _config.DisableIndexesThreshold;
                 OnTablesUpdated();
 
                 await _axDbService.InsertDataAsync(table, cancellationToken);
@@ -1652,6 +1654,7 @@ namespace DBSyncTool.Services
 
                 // STAGE 2: TRUNCATE + INSERT
                 table.Status = TableStatus.Inserting;
+                table.DisableIndexesThreshold = _config.DisableIndexesThreshold;
                 OnTablesUpdated();
 
                 await _axDbService.InsertSystemTableDataAsync(table, cancellationToken);
